@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
     trace.push("Applied 1% markup and PO replacement.");
 
     // 8. Generate Updated PDF
-    const updatedPdfBuffer = await generateInvoicePDF(processed.markedUp);
+    const updatedPdfBuffer = await generateInvoicePDF(processed.markedUp, pdfAttachment.content as Buffer);
     trace.push("Generated updated PDF.");
 
     // 9. Send Reply Email

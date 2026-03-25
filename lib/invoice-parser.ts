@@ -14,7 +14,7 @@
  * so the user can manually correct values in the UI.
  */
 
-import type { ParsedInvoice, ParsedLineItem } from "@/types/invoice";
+import type { ParsedInvoice, ParsedLineItem, PDFFieldMetadata } from "@/types/invoice";
 import { parseCurrencyString } from "@/lib/currency";
 import { detectPOPlaceholder } from "@/lib/text-replacement";
 
@@ -22,21 +22,29 @@ import { detectPOPlaceholder } from "@/lib/text-replacement";
 // PDF Text Extraction (pdfjs-dist, Node-only)
 // ─────────────────────────────────────────────
 
+export interface PDFTextItem {
+  str: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  pageIndex: number;
+}
+
+export interface ExtractedPDFContent {
+  rawText: string;
+  items: PDFTextItem[];
+}
+
 /**
- * Extract raw text from a PDF buffer using pdfjs-dist.
- * Runs server-side only.
+ * Extract raw text and coordinates from a PDF buffer using pdfjs-dist.
  */
-export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
+export async function extractTextFromPDF(buffer: Buffer): Promise<ExtractedPDFContent> {
   const { join } = await import("path");
   
-  // Import pdfjs from the legacy build
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  
-  // Next.js may wrap the module in a default property
   const lib = (pdfjs as any).default || pdfjs;
 
-  // Set workerSrc to the absolute path of the worker file
-  // This must be a string.
   lib.GlobalWorkerOptions.workerSrc = join(
     process.cwd(),
     "node_modules",
@@ -48,27 +56,44 @@ export async function extractTextFromPDF(buffer: Buffer): Promise<string> {
 
   const uint8 = new Uint8Array(buffer);
 
-  // Use getDocument with Node-friendly settings
   const loadingTask = lib.getDocument({
     data: uint8,
-    disableWorker: true, // Crucial for Node.js
+    disableWorker: true,
     useWorkerFetch: false,
     isEvalSupported: false,
   });
 
   const pdf = await loadingTask.promise;
   const pageTexts: string[] = [];
+  const items: PDFTextItem[] = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
-    const pageText = content.items
-      .map((item: any) => ("str" in item ? item.str : ""))
-      .join(" ");
-    pageTexts.push(pageText);
+    const pageIndex = i - 1;
+    
+    const pageItems: string[] = [];
+    content.items.forEach((item: any) => {
+      if ("str" in item) {
+        pageItems.push(item.str);
+        const [scaleX, skewX, skewY, scaleY, x, y] = item.transform;
+        items.push({
+          str: item.str,
+          x,
+          y,
+          width: item.width,
+          height: item.height,
+          pageIndex,
+        });
+      }
+    });
+    pageTexts.push(pageItems.join(" "));
   }
 
-  return pageTexts.join("\n");
+  return {
+    rawText: pageTexts.join("\n"),
+    items,
+  };
 }
 
 // ─────────────────────────────────────────────
@@ -211,8 +236,30 @@ function extractBlock(text: string, startPattern: RegExp, endPattern: RegExp): s
 // Main Parse Function
 // ─────────────────────────────────────────────
 
-export function parseInvoiceText(rawText: string): ParsedInvoice {
-  const text = rawText;
+/**
+ * Finds the coordinates for a field by searching for the value string in PDF items.
+ */
+function findMetadata(value: string | null, items: PDFTextItem[]): PDFFieldMetadata | undefined {
+  if (!value) return undefined;
+  
+  // Try to find an item that exactly matches or contains the value
+  const item = items.find(it => it.str.includes(value));
+  if (item) {
+    return {
+      rect: {
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height
+      },
+      pageIndex: item.pageIndex
+    };
+  }
+  return undefined;
+}
+
+export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
+  const { rawText: text, items } = content;
 
   // Header fields
   const invoiceNumber = extractField(text, [
@@ -294,12 +341,21 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
   );
 
   // PO placeholder detection
-  const poCheck = detectPOPlaceholder(rawText);
+  const poCheck = detectPOPlaceholder(text);
 
   // Line items
-  const lineItems = extractLineItems(rawText);
+  const lineItems = extractLineItems(text);
+  
+  // Enhance line items with metadata for overlay
+  lineItems.forEach(item => {
+    if (item.amount !== null) {
+      // Find coordinates for the amount string
+      const amtStr = item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 });
+      item.amountMetadata = findMetadata(amtStr, items);
+    }
+  });
 
-  // Confidence check — if we couldn't extract key fields, flag low confidence
+  // Confidence check
   const keyFieldsMissing = !invoiceNumber && !balanceDue && !invoiceDate;
   const lowConfidence = keyFieldsMissing;
 
@@ -323,7 +379,18 @@ export function parseInvoiceText(rawText: string): ParsedInvoice {
     totalAmount,
     poPlaceholderDetected: poCheck.detected,
     poOriginalText: poCheck.matchedText,
-    extractedRawText: rawText,
+    sourceMetadata: {
+      invoiceNumber: findMetadata(invoiceNumber, items),
+      invoiceDate: findMetadata(invoiceDate, items),
+      dueDate: findMetadata(dueDate, items),
+      balanceDue: findMetadata(balanceDue !== null ? balanceDue.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
+      subtotal: findMetadata(subtotal !== null ? subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
+      taxAmount: findMetadata(taxAmount !== null ? taxAmount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
+      creditAmount: findMetadata(creditAmount !== null ? creditAmount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
+      totalAmount: findMetadata(totalAmount !== null ? totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
+      poPlaceholder: findMetadata(poCheck.matchedText, items),
+    },
+    extractedRawText: text,
     lowConfidence,
   };
 }

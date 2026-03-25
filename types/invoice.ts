@@ -2,6 +2,18 @@
 // Core invoice data types (transient, no DB)
 // ─────────────────────────────────────────────
 
+export interface PDFRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface PDFFieldMetadata {
+  rect: PDFRect;
+  pageIndex: number;
+}
+
 export interface ParsedLineItem {
   title: string;
   description: string;
@@ -11,6 +23,8 @@ export interface ParsedLineItem {
   amount: number | null;
   /** Distinguishes service rows from tax/credit/other rows */
   type: "service" | "tax" | "credit" | "other";
+  /** Metadata for the amount field if we want to overwrite it */
+  amountMetadata?: PDFFieldMetadata;
 }
 
 export interface ParsedInvoice {
@@ -48,6 +62,19 @@ export interface ParsedInvoice {
   // PO handling
   poPlaceholderDetected: boolean;
   poOriginalText: string | null;
+
+  // Source coordinate metadata for overlay
+  sourceMetadata: {
+    invoiceNumber?: PDFFieldMetadata;
+    invoiceDate?: PDFFieldMetadata;
+    dueDate?: PDFFieldMetadata;
+    balanceDue?: PDFFieldMetadata;
+    subtotal?: PDFFieldMetadata;
+    taxAmount?: PDFFieldMetadata;
+    creditAmount?: PDFFieldMetadata;
+    totalAmount?: PDFFieldMetadata;
+    poPlaceholder?: PDFFieldMetadata;
+  };
 
   // Raw text for fallback / manual review
   extractedRawText: string;

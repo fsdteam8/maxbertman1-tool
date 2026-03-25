@@ -26,9 +26,110 @@ const PAGE_WIDTH = PageSizes.Letter[0]; // 612
 const PAGE_HEIGHT = PageSizes.Letter[1]; // 792
 const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
 
-export async function generateInvoicePDF(invoice: ParsedInvoice): Promise<Buffer> {
+export async function generateInvoicePDF(
+  invoice: ParsedInvoice,
+  originalPdfBuffer?: Buffer
+): Promise<Buffer> {
+  // If original PDF is provided, use the Overlay Strategy for pixel-perfection
+  if (originalPdfBuffer) {
+    try {
+      const pdfDoc = await PDFDocument.load(originalPdfBuffer);
+      const pages = pdfDoc.getPages();
+      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+
+      const drawOverlay = (
+        metadata: any,
+        newValue: string | number | null,
+        isBold = false,
+        alignRight = false
+      ) => {
+        if (!metadata || newValue === null || newValue === undefined) return;
+        const page = pages[metadata.pageIndex];
+        if (!page) return;
+
+        const { x, y, width, height } = metadata.rect;
+        const textValue =
+          typeof newValue === "number" ? formatCurrency(newValue) : newValue;
+
+        const font = isBold ? boldFont : regularFont;
+        // Use a slightly more precise font size matching the original height
+        const fontSize = height > 0 ? height * 0.85 : 9.5;
+
+        // Mask the original text
+        page.drawRectangle({
+          x: x - 2,
+          y: y - 2,
+          width: width + 4,
+          height: height + 4,
+          color: COLORS.white,
+        });
+
+        let drawX = x;
+        if (alignRight) {
+          const newWidth = font.widthOfTextAtSize(textValue, fontSize);
+          // Maintain the right-most edge of the original text box
+          drawX = x + width - newWidth;
+        }
+
+        // Draw the new value
+        page.drawText(textValue, {
+          x: drawX,
+          y,
+          size: fontSize,
+          font,
+          color: COLORS.black,
+        });
+      };
+
+      // Header fields
+      drawOverlay(invoice.sourceMetadata.invoiceNumber, invoice.invoiceNumber, true);
+      drawOverlay(invoice.sourceMetadata.invoiceDate, invoice.invoiceDate);
+      drawOverlay(invoice.sourceMetadata.dueDate, invoice.dueDate);
+      drawOverlay(invoice.sourceMetadata.balanceDue, invoice.balanceDue, true, true);
+
+      // Totals
+      drawOverlay(invoice.sourceMetadata.subtotal, invoice.subtotal, false, true);
+      drawOverlay(invoice.sourceMetadata.taxAmount, invoice.taxAmount, false, true);
+      drawOverlay(invoice.sourceMetadata.creditAmount, invoice.creditAmount, false, true);
+      drawOverlay(invoice.sourceMetadata.totalAmount, invoice.totalAmount, true, true);
+
+      // Line items amounts
+      invoice.lineItems.forEach((item) => {
+        if (item.amountMetadata) {
+          drawOverlay(item.amountMetadata, item.amount, true, true);
+        }
+      });
+
+      // PO Placeholder replacement
+      if (invoice.sourceMetadata.poPlaceholder) {
+        // Find if any line item was modified with a PO replacement
+        const replacementItem = invoice.lineItems.find(it => 
+          it.description.includes("PO#") || it.title.includes("PO#")
+        );
+        
+        if (replacementItem) {
+          // Extract the PO# part from the description/title
+          const poMatch = /PO#\s*([\w\-]+)/.exec(replacementItem.description) || 
+                          /PO#\s*([\w\-]+)/.exec(replacementItem.title);
+          
+          if (poMatch) {
+            drawOverlay(invoice.sourceMetadata.poPlaceholder, `PO# ${poMatch[1]}`, true);
+          }
+        }
+      }
+
+      const pdfBytes = await pdfDoc.save();
+      return Buffer.from(pdfBytes);
+    } catch (err) {
+      console.warn("Overlay failed, falling back to recreation:", err);
+    }
+  }
+
+  // --- Fallback: Programmatic Recreation ---
   const pdfDoc = await PDFDocument.create();
   const page = pdfDoc.addPage(PageSizes.Letter);
+  // ... (rest of the existing implementation)
 
   const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
   const regularFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
