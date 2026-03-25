@@ -1,30 +1,26 @@
 /**
- * Outbound email service using Nodemailer.
+ * Outbound email service using SendGrid API.
  *
  * Requirements:
  * 1. Send processed invoice PDF as attachment.
  * 2. Support success/failure notifications.
- * 3. Use SMTP configuration from environment variables.
+ * 3. Uses SendGrid API for reliable delivery from serverless (Vercel).
  */
 
-import nodemailer from "nodemailer";
+import sgMail from "@sendgrid/mail";
 import type { OutboundEmailOptions } from "@/types/email";
 
-// SMTP configuration from environment variables
-const SMTP_CONFIG = {
-  host: process.env.SMTP_HOST || "smtp.example.com",
-  port: parseInt(process.env.SMTP_PORT || "587", 10),
-  secure: process.env.SMTP_SECURE === "true",
-  auth: {
-    user: process.env.SMTP_USER || "user",
-    pass: process.env.SMTP_PASS || "pass",
-  },
-};
+// Initialise SendGrid
+const SENDGRID_API_KEY = process.env.SENDGRID_API_KEY;
+if (SENDGRID_API_KEY) {
+  sgMail.setApiKey(SENDGRID_API_KEY);
+}
 
-const FROM_ADDRESS = process.env.SMTP_FROM || '"Invoice Automation" <noreply@example.com>';
+const FROM_ADDRESS = process.env.EMAIL_FROM || "notifications@system4sneai.com";
+const BASE_URL = process.env.NEXT_PUBLIC_BASE_URL;
 
 /**
- * Send an email with optional attachments.
+ * Send an email with optional attachments via SendGrid.
  */
 export async function sendEmail({
   to,
@@ -34,27 +30,45 @@ export async function sendEmail({
   attachments = [],
   replyToMessageId,
 }: OutboundEmailOptions): Promise<void> {
-  const transporter = nodemailer.createTransport(SMTP_CONFIG);
-
-  const extraHeaders: Record<string, string> = {};
-  if (replyToMessageId) {
-    extraHeaders["In-Reply-To"] = replyToMessageId;
-    extraHeaders["References"] = replyToMessageId;
+  if (!SENDGRID_API_KEY) {
+    throw new Error("SENDGRID_API_KEY is not configured. Cannot send email.");
   }
 
-  await transporter.sendMail({
-    from: FROM_ADDRESS,
+  console.log(`[email-outbound] Sending email to ${to} | subject: "${subject}"`);
+
+  const msg: sgMail.MailDataRequired = {
     to,
+    from: FROM_ADDRESS,
     subject,
     text: bodyText,
-    html: bodyHtml,
+    html: bodyHtml || bodyText,
     attachments: attachments.map((a) => ({
       filename: a.filename,
-      content: a.content,
-      contentType: a.contentType,
+      content: Buffer.isBuffer(a.content)
+        ? a.content.toString("base64")
+        : a.content,
+      type: a.contentType,
+      disposition: "attachment" as const,
     })),
-    headers: extraHeaders,
-  });
+  };
+
+  if (replyToMessageId) {
+    msg.headers = {
+      "In-Reply-To": replyToMessageId,
+      References: replyToMessageId,
+    };
+  }
+
+  try {
+    const [response] = await sgMail.send(msg);
+    console.log(`[email-outbound] Email sent. Status: ${response.statusCode}, Headers: x-message-id=${response.headers?.["x-message-id"] || "n/a"}`);
+  } catch (error: any) {
+    const details = error?.response?.body?.errors
+      ? JSON.stringify(error.response.body.errors)
+      : error.message;
+    console.error(`[email-outbound] SendGrid send failed:`, details);
+    throw new Error(`Email delivery failed: ${details}`);
+  }
 }
 
 /**
@@ -66,11 +80,11 @@ export async function sendProcessedInvoiceEmail(
   pdfBuffer: Buffer,
   replyToMessageId?: string
 ): Promise<void> {
-  const subject = invoiceNumber 
+  const subject = invoiceNumber
     ? `Processed Invoice #${invoiceNumber}`
     : "Your Processed Invoice";
 
-  const filename = invoiceNumber 
+  const filename = invoiceNumber
     ? `Invoice_${invoiceNumber}_Processed.pdf`
     : "Processed_Invoice.pdf";
 
@@ -104,11 +118,11 @@ export async function sendFailureEmail(
   await sendEmail({
     to,
     subject: "Invoice Processing Failed",
-    bodyText: `We could not process your invoice automatically. Error: ${error}\n\nPlease verify the file format or use the manual upload tool at http://yourdomain.com/tool`,
+    bodyText: `We could not process your invoice automatically. Error: ${error}\n\nPlease verify the file format or use the manual upload tool at ${BASE_URL}/tool`,
     bodyHtml: `
       <p>We could not process your invoice automatically.</p>
       <p style="color: #dc2626;"><b>Error:</b> ${error}</p>
-      <p>Please verify the file format or use the <a href="http://yourdomain.com/tool">manual upload tool</a>.</p>
+      <p>Please verify the file format or use the <a href="${BASE_URL}/tool">manual upload tool</a>.</p>
     `,
     replyToMessageId,
   });

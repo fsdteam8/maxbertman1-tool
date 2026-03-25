@@ -60,8 +60,9 @@ export function parseSendGridWebhook(
   const get = (k: string) =>
     Array.isArray(fields[k]) ? fields[k][0] : fields[k] ?? "";
 
-  if (attachments.length > MAX_ATTACHMENTS) {
-    throw new Error(`Too many attachments (max ${MAX_ATTACHMENTS}).`);
+  const attachmentCount = parseInt(get("attachments") || "0", 10);
+  if (attachmentCount > MAX_ATTACHMENTS || attachments.length > MAX_ATTACHMENTS) {
+    throw new Error(`Too many attachments (received ${Math.max(attachmentCount, attachments.length)}, max ${MAX_ATTACHMENTS}).`);
   }
 
   return {
@@ -115,8 +116,12 @@ export function parseGenericWebhook(body: unknown): InboundEmailPayload {
  * Returns an error string or null if valid.
  */
 export function validateAttachment(attachment: EmailAttachment): string | null {
-  if (attachment.contentType !== "application/pdf") {
-    return `Unsupported file type: ${attachment.contentType}. Only PDF files are accepted.`;
+  const isPdf =
+    attachment.contentType === "application/pdf" ||
+    attachment.filename?.toLowerCase().endsWith(".pdf");
+
+  if (!isPdf) {
+    return `Unsupported file type: ${attachment.contentType} (${attachment.filename}). Only PDF files are accepted.`;
   }
 
   if (attachment.size > MAX_ATTACHMENT_BYTES) {
@@ -159,7 +164,10 @@ export function extractPOFromEmail(
 ): string | null {
   const combined = `${subject}\n${body}`;
 
-  const match = /PO(?:#|:|Number)?[\s:]*([A-Za-z0-9\-\/\.]+)/i.exec(combined);
+  // More robust regex for PO extraction
+  // Handles: PO: 12345, PO# 12345, PO Number: 12345, Purchase Order: 12345, PO 12345
+  // Updated to avoid picking up arbitrary numbers by requiring a PO-related prefix
+  const match = /(?:PO|Purchase\s*Order)(?:#|:|Number)?[\s:]*([A-Za-z0-9\-\/\.]+)/i.exec(combined);
 
   return match ? match[1].trim() : null;
 }

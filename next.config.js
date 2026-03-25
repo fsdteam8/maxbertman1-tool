@@ -1,6 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ['pdfjs-dist', 'nodemailer', 'canvas'],
+  serverExternalPackages: ['pdfjs-dist', 'nodemailer', 'canvas', '@sendgrid/mail'],
   webpack: (config, { isServer }) => {
     if (isServer) {
       // pdfjs-dist requires canvas on server; mock it if needed
