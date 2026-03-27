@@ -6,12 +6,42 @@ export const dynamic = "force-dynamic";
 /**
  * POST /api/invoice/generate
  * 
- * Accepts a ParsedInvoice JSON (the marked-up version).
- * Generates a clean PDF and returns it as a binary stream.
+ * Accepts either:
+ *  - multipart/form-data with 'invoice' (JSON string) + optional 'originalPdf' (File)
+ *  - application/json with the invoice object directly (legacy)
+ * 
+ * Generates a PDF and returns it as a binary stream.
+ * When an original PDF is provided, uses overlay mode for high-fidelity output.
  */
 export async function POST(req: NextRequest) {
   try {
-    const invoice = await req.json();
+    let invoice: any;
+    let originalPdfBuffer: Buffer | undefined;
+
+    const contentType = req.headers.get("content-type") || "";
+
+    if (contentType.includes("multipart/form-data")) {
+      // FormData mode: invoice JSON string + optional original PDF
+      const formData = await req.formData();
+      const invoiceField = formData.get("invoice");
+      const pdfFile = formData.get("originalPdf") as File | null;
+
+      if (!invoiceField) {
+        return NextResponse.json(
+          { success: false, error: "Missing invoice data" },
+          { status: 400 }
+        );
+      }
+
+      invoice = JSON.parse(invoiceField as string);
+
+      if (pdfFile) {
+        originalPdfBuffer = Buffer.from(await pdfFile.arrayBuffer());
+      }
+    } else {
+      // Legacy JSON mode
+      invoice = await req.json();
+    }
 
     if (!invoice) {
       return NextResponse.json(
@@ -20,15 +50,15 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Step 1: Generate the PDF buffer
-    const pdfBuffer = await generateInvoicePDF(invoice);
+    // Generate the PDF buffer (overlay when original is available)
+    const pdfBuffer = await generateInvoicePDF(invoice, originalPdfBuffer);
 
-    // Step 2: Determine filename
+    // Determine filename
     const filename = invoice.invoiceNumber 
       ? `Invoice_${invoice.invoiceNumber}_Processed.pdf`
       : "Processed_Invoice.pdf";
 
-    // Step 3: Stream as PDF response
+    // Stream as PDF response
     return new NextResponse(new Uint8Array(pdfBuffer), {
       status: 200,
       headers: {

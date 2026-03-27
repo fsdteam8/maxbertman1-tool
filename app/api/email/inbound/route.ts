@@ -134,10 +134,11 @@ export async function POST(req: NextRequest) {
     trace.push(`FATAL ERROR: ${error.message}`);
     
     // Attempt to send failure notification if we have a sender
+    const errorDetail = error instanceof Error ? error.message : String(error);
     if (senderEmail !== "unknown") {
       await sendFailureEmail(
         senderEmail,
-        `A technical error occurred while processing your invoice: ${error.message}`,
+        `Invoice processing failed: ${errorDetail}`,
         messageId
       ).catch((e) => console.error("Failed to send failure email:", e));
     }

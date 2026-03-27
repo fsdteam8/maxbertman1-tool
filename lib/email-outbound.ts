@@ -91,10 +91,10 @@ export async function sendProcessedInvoiceEmail(
   await sendEmail({
     to,
     subject,
-    bodyText: `Your invoice has been processed successfully. The updated version with the 1% markup applied and PO information corrected is attached.`,
+    bodyText: `Your invoice has been processed successfully. The updated version is attached.`,
     bodyHtml: `
       <p>Your invoice has been processed successfully.</p>
-      <p>The updated version with the <b>1% markup applied</b> and PO information corrected is attached.</p>
+      <p>The updated version is attached.</p>
     `,
     attachments: [
       {

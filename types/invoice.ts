@@ -74,6 +74,7 @@ export interface ParsedInvoice {
     creditAmount?: PDFFieldMetadata;
     totalAmount?: PDFFieldMetadata;
     poPlaceholder?: PDFFieldMetadata;
+    serviceAddress?: PDFFieldMetadata;
   };
 
   // Raw text for fallback / manual review

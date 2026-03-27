@@ -14,7 +14,11 @@
  * so the user can manually correct values in the UI.
  */
 
-import type { ParsedInvoice, ParsedLineItem, PDFFieldMetadata } from "@/types/invoice";
+import type {
+  ParsedInvoice,
+  ParsedLineItem,
+  PDFFieldMetadata,
+} from "@/types/invoice";
 import { parseCurrencyString } from "@/lib/currency";
 import { detectPOPlaceholder } from "@/lib/text-replacement";
 
@@ -39,23 +43,18 @@ export interface ExtractedPDFContent {
 /**
  * Extract raw text and coordinates from a PDF buffer using pdfjs-dist.
  */
-export async function extractTextFromPDF(buffer: Buffer): Promise<ExtractedPDFContent> {
+export async function extractTextFromPDF(
+  buffer: Buffer,
+): Promise<ExtractedPDFContent> {
   const { join } = await import("path");
-  
+
   const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const lib = (pdfjs as any).default || pdfjs;
 
-  lib.GlobalWorkerOptions.workerSrc = join(
-    process.cwd(),
-    "node_modules",
-    "pdfjs-dist",
-    "legacy",
-    "build",
-    "pdf.worker.mjs"
-  );
-
   const uint8 = new Uint8Array(buffer);
 
+  // In Node.js environment (especially on Vercel), we want to disable the worker
+  // to avoid path resolution issues with node_modules.
   const loadingTask = lib.getDocument({
     data: uint8,
     disableWorker: true,
@@ -71,7 +70,7 @@ export async function extractTextFromPDF(buffer: Buffer): Promise<ExtractedPDFCo
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     const pageIndex = i - 1;
-    
+
     const pageItems: string[] = [];
     content.items.forEach((item: any) => {
       if ("str" in item) {
@@ -149,34 +148,61 @@ function extractLineItems(text: string): ParsedLineItem[] {
     });
   }
 
-  // Service rows — heuristic: lines with dollar amounts that look like service charges
-  // Match patterns like "Service Name ... $1,234.56" or amounts on their own lines
-  const servicePattern =
-    /([A-Za-z][A-Za-z\s\-\/&,().#]+?)\s+\$?([\d,]+\.\d{2})\s*$/gm;
-  let match: RegExpExecArray | null;
-  while ((match = servicePattern.exec(text)) !== null) {
-    const title = match[1].trim();
-    const amount = parseCurrencyString(match[2]);
+  // Pre-split raw text into logical lines.
+  // pdfjs-dist joins page items with spaces, so we split on double-space,
+  // newline, or patterns that indicate a new conceptual line.
+  const logicalLines = text
+    .split(/\n+/)
+    .flatMap((line) => line.split(/\s{2,}/))
+    .map((l) => l.trim())
+    .filter(Boolean);
 
-    // Skip if this looks like a header or a total line
-    const skipWords = [
-      "balance due",
-      "subtotal",
-      "total",
-      "tax",
-      "credit",
-      "amount",
-      "invoice",
-      "customer",
-      "date",
-      "due",
-    ];
+  // Strategy 1: lines with "Title ... $Amount" pattern
+  const servicePattern =
+    /([A-Za-z][A-Za-z\s\-\/&,().#]+?)\s+\$?([\d,]+\.\d{2})\s*$/;
+
+  // Strategy 2: lines that are just an amount preceded by any text
+  const loosePattern = /^(.+?)\s+\$?([\d,]+\.\d{2})\s*$/;
+
+  const skipWords = [
+    "balance due",
+    "subtotal",
+    "total",
+    "tax",
+    "credit",
+    "amount",
+    "invoice",
+    "customer",
+    "date",
+    "due",
+    "bill to",
+    "remit to",
+    "service address",
+    "qty",
+    "rate",
+  ];
+
+  const seenAmounts = new Set<string>();
+
+  for (const line of logicalLines) {
+    // Try strict pattern first, then loose
+    let match = servicePattern.exec(line) || loosePattern.exec(line);
+    if (!match) continue;
+
+    const title = match[1].trim();
+    const amountStr = match[2];
+    const amount = parseCurrencyString(amountStr);
+
+    // Skip headers, totals, and duplicates
     if (skipWords.some((w) => title.toLowerCase().includes(w))) continue;
     if (amount === null) continue;
+    if (seenAmounts.has(amountStr)) continue;
+    seenAmounts.add(amountStr);
 
     // Check if PO placeholder is in surrounding context
-    const contextStart = Math.max(0, match.index - 200);
-    const context = text.slice(contextStart, match.index + match[0].length + 100);
+    const lineIndex = text.indexOf(line);
+    const contextStart = Math.max(0, lineIndex - 200);
+    const context = text.slice(contextStart, lineIndex + line.length + 100);
     const poCheck = detectPOPlaceholder(context);
 
     items.push({
@@ -208,7 +234,7 @@ function extractLineItems(text: string): ParsedLineItem[] {
 function extractDateRange(text: string): string | null {
   const match =
     /(\d{1,2}\/\d{1,2}\/\d{2,4})\s*[-–to]+\s*(\d{1,2}\/\d{1,2}\/\d{2,4})/i.exec(
-      text
+      text,
     );
   if (match) return `${match[1]} – ${match[2]}`;
   return null;
@@ -218,13 +244,19 @@ function extractDateRange(text: string): string | null {
 // Address Block Extraction
 // ─────────────────────────────────────────────
 
-function extractBlock(text: string, startPattern: RegExp, endPattern: RegExp): string[] {
+function extractBlock(
+  text: string,
+  startPattern: RegExp,
+  endPattern: RegExp,
+): string[] {
   const startMatch = startPattern.exec(text);
   if (!startMatch) return [];
   const blockStart = startMatch.index + startMatch[0].length;
   const remaining = text.slice(blockStart);
   const endMatch = endPattern.exec(remaining);
-  const block = endMatch ? remaining.slice(0, endMatch.index) : remaining.slice(0, 300);
+  const block = endMatch
+    ? remaining.slice(0, endMatch.index)
+    : remaining.slice(0, 300);
   return block
     .split(/[\n\r]+/)
     .map((l) => l.trim())
@@ -238,23 +270,86 @@ function extractBlock(text: string, startPattern: RegExp, endPattern: RegExp): s
 
 /**
  * Finds the coordinates for a field by searching for the value string in PDF items.
+ * Uses a multi-tier strategy:
+ *  1. Exact substring match within a single text item
+ *  2. Stripped numeric match (ignoring $, commas, spaces)
+ *  3. Proximity-based match: find adjacent items whose concatenation contains the value
  */
-function findMetadata(value: string | null, items: PDFTextItem[]): PDFFieldMetadata | undefined {
+function findMetadata(
+  value: string | null,
+  items: PDFTextItem[],
+): PDFFieldMetadata | undefined {
   if (!value) return undefined;
-  
-  // Try to find an item that exactly matches or contains the value
-  const item = items.find(it => it.str.includes(value));
-  if (item) {
+
+  // Tier 1: Exact substring match
+  const exactItem = items.find((it) => it.str.includes(value));
+  if (exactItem) {
     return {
       rect: {
-        x: item.x,
-        y: item.y,
-        width: item.width,
-        height: item.height
+        x: exactItem.x,
+        y: exactItem.y,
+        width: exactItem.width,
+        height: exactItem.height,
       },
-      pageIndex: item.pageIndex
+      pageIndex: exactItem.pageIndex,
     };
   }
+
+  // Tier 2: Stripped numeric match — for values like "1,234.50" that may appear as "1234.50" or "1,234" in items
+  const stripped = value.replace(/[$,\s]/g, "");
+  if (stripped) {
+    const numItem = items.find((it) =>
+      it.str.replace(/[$,\s]/g, "").includes(stripped),
+    );
+    if (numItem) {
+      return {
+        rect: {
+          x: numItem.x,
+          y: numItem.y,
+          width: numItem.width,
+          height: numItem.height,
+        },
+        pageIndex: numItem.pageIndex,
+      };
+    }
+  }
+
+  // Tier 3: Proximity-based — group adjacent items on the same line and search the concatenation
+  const Y_TOLERANCE = 3; // items within 3 units vertically are on the same "line"
+  for (let i = 0; i < items.length; i++) {
+    const anchor = items[i];
+    let concat = anchor.str;
+    let maxX = anchor.x + anchor.width;
+    let maxH = anchor.height;
+
+    // Extend rightward through adjacent items on the same line
+    for (let j = i + 1; j < items.length; j++) {
+      const next = items[j];
+      if (next.pageIndex !== anchor.pageIndex) break;
+      if (Math.abs(next.y - anchor.y) > Y_TOLERANCE) continue;
+      if (next.x < maxX - 5) continue; // skip items that are behind (not sequential)
+
+      concat += next.str;
+      maxX = next.x + next.width;
+      maxH = Math.max(maxH, next.height);
+
+      if (
+        concat.includes(value) ||
+        concat.replace(/[$,\s]/g, "").includes(stripped)
+      ) {
+        return {
+          rect: {
+            x: anchor.x,
+            y: anchor.y,
+            width: maxX - anchor.x,
+            height: maxH,
+          },
+          pageIndex: anchor.pageIndex,
+        };
+      }
+    }
+  }
+
   return undefined;
 }
 
@@ -319,25 +414,25 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   const billToLines = extractBlock(
     text,
     /Bill\s+To\s*:?/i,
-    /Service\s+Address|Remit\s+To|Invoice\s*#|Customer\s*#/i
+    /Service\s+Address|Remit\s+To|Invoice\s*#|Customer\s*#/i,
   );
 
   const issuerLines = extractBlock(
     text,
     /(?:System4|Issuer|From)\s/i,
-    /Bill\s+To|Invoice\s*#/i
+    /Bill\s+To|Invoice\s*#/i,
   );
 
   const serviceAddressLines = extractBlock(
     text,
     /Service\s+Address\s*:?/i,
-    /Remit\s+To|Total|Balance|Invoice\s*#/i
+    /Remit\s+To|Total|Balance|Invoice\s*#/i,
   );
 
   const remitToLines = extractBlock(
     text,
     /Remit\s+To\s*:?/i,
-    /Thank\s+you|Page\s+\d|END/i
+    /Thank\s+you|Page\s+\d|END/i,
   );
 
   // PO placeholder detection
@@ -345,12 +440,14 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
 
   // Line items
   const lineItems = extractLineItems(text);
-  
+
   // Enhance line items with metadata for overlay
-  lineItems.forEach(item => {
+  lineItems.forEach((item) => {
     if (item.amount !== null) {
       // Find coordinates for the amount string
-      const amtStr = item.amount.toLocaleString('en-US', { minimumFractionDigits: 2 });
+      const amtStr = item.amount.toLocaleString("en-US", {
+        minimumFractionDigits: 2,
+      });
       item.amountMetadata = findMetadata(amtStr, items);
     }
   });
@@ -383,12 +480,40 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
       invoiceNumber: findMetadata(invoiceNumber, items),
       invoiceDate: findMetadata(invoiceDate, items),
       dueDate: findMetadata(dueDate, items),
-      balanceDue: findMetadata(balanceDue !== null ? balanceDue.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
-      subtotal: findMetadata(subtotal !== null ? subtotal.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
-      taxAmount: findMetadata(taxAmount !== null ? taxAmount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
-      creditAmount: findMetadata(creditAmount !== null ? creditAmount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
-      totalAmount: findMetadata(totalAmount !== null ? totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 }) : null, items),
+      balanceDue: findMetadata(
+        balanceDue !== null
+          ? balanceDue.toLocaleString("en-US", { minimumFractionDigits: 2 })
+          : null,
+        items,
+      ),
+      subtotal: findMetadata(
+        subtotal !== null
+          ? subtotal.toLocaleString("en-US", { minimumFractionDigits: 2 })
+          : null,
+        items,
+      ),
+      taxAmount: findMetadata(
+        taxAmount !== null
+          ? taxAmount.toLocaleString("en-US", { minimumFractionDigits: 2 })
+          : null,
+        items,
+      ),
+      creditAmount: findMetadata(
+        creditAmount !== null
+          ? creditAmount.toLocaleString("en-US", { minimumFractionDigits: 2 })
+          : null,
+        items,
+      ),
+      totalAmount: findMetadata(
+        totalAmount !== null
+          ? totalAmount.toLocaleString("en-US", { minimumFractionDigits: 2 })
+          : null,
+        items,
+      ),
       poPlaceholder: findMetadata(poCheck.matchedText, items),
+      serviceAddress:
+        findMetadata("Service Address", items) ||
+        findMetadata("SERVICE ADDRESS", items),
     },
     extractedRawText: text,
     lowConfidence,

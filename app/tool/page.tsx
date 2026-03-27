@@ -31,11 +31,13 @@ export default function ToolPage() {
   const [parsedInvoice, setParsedInvoice] = useState<ParsedInvoice | null>(null);
   const [processedInvoice, setProcessedInvoice] = useState<ProcessedInvoice | null>(null);
   const [poNumber, setPoNumber] = useState("");
+  const [originalFile, setOriginalFile] = useState<File | null>(null);
 
   // Handlers
   const handleFileSelect = async (file: File) => {
     setError(null);
     setStep("uploading");
+    setOriginalFile(file); // Retain original for overlay generation
     
     try {
       const formData = new FormData();
@@ -91,10 +93,16 @@ export default function ToolPage() {
     
     setStep("generating");
     try {
+      // Send invoice JSON + original PDF file via FormData for overlay generation
+      const formData = new FormData();
+      formData.append("invoice", JSON.stringify(processedInvoice.markedUp));
+      if (originalFile) {
+        formData.append("originalPdf", originalFile);
+      }
+
       const res = await fetch("/api/invoice/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(processedInvoice.markedUp),
+        body: formData,
       });
       
       if (!res.ok) throw new Error("Failed to generate PDF");
@@ -122,6 +130,7 @@ export default function ToolPage() {
     setParsedInvoice(null);
     setProcessedInvoice(null);
     setPoNumber("");
+    setOriginalFile(null);
   };
 
   // UI Sections
