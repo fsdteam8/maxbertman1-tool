@@ -126,5 +126,6 @@ export interface InvoiceGenerateRequest {
 export interface InvoiceParseResult {
   success: boolean;
   invoice?: ParsedInvoice;
+  logoDataUrl?: string;
   error?: string;
 }

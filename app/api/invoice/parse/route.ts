@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractTextFromPDF, parseInvoiceText } from "@/lib/invoice-parser";
 import { normalizeInvoice } from "@/lib/invoice-normalizer";
+import { getLogoDataUrl } from "@/lib/logo-loader";
 import type { InvoiceParseResult } from "@/types/invoice";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/invoice/parse
- * 
+ *
  * Accepts a multipart/form-data request with an 'file' field (PDF).
  * Extracts text and parses it into a structured ParsedInvoice JSON.
+ * Also returns the logo data URL for rendering in the generated PDF.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -19,14 +21,14 @@ export async function POST(req: NextRequest) {
     if (!file) {
       return NextResponse.json(
         { success: false, error: "No file uploaded" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     if (file.type !== "application/pdf") {
       return NextResponse.json(
         { success: false, error: "Only PDF files are supported" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -42,9 +44,13 @@ export async function POST(req: NextRequest) {
     // Step 3: Normalize data
     const normalized = normalizeInvoice(parsed);
 
+    // Step 4: Get logo data URL (currently uses static logo, could extract from PDF)
+    const logoDataUrl = getLogoDataUrl();
+
     const result: InvoiceParseResult = {
       success: true,
       invoice: normalized,
+      logoDataUrl,
     };
 
     return NextResponse.json(result);
@@ -52,7 +58,7 @@ export async function POST(req: NextRequest) {
     console.error("[api/invoice/parse] Fatal error:", error);
     return NextResponse.json(
       { success: false, error: error.message || "Failed to parse invoice" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

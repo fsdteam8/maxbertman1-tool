@@ -46,12 +46,7 @@ export function InvoicePreviewCard({
         </div>
 
         <PDFDownloadLink
-          document={
-            <InvoiceDocument
-              invoice={processed.markedUp}
-              logoDataUrl={logoDataUrl}
-            />
-          }
+          document={<InvoiceDocument invoice={processed.markedUp} logoDataUrl={logoDataUrl} />}
           fileName={fileName}
           className="inline-flex items-center justify-center rounded-2xl h-14 px-8 font-bold text-lg bg-primary text-primary-foreground hover:bg-primary/90 shadow-2xl shadow-primary/20 transition-all hover:scale-[1.02] active:scale-[0.98] disabled:opacity-50"
         >

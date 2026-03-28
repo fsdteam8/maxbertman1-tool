@@ -10,11 +10,13 @@ import type { ParsedInvoice } from "@/types/invoice";
 interface DownloadResultCardProps {
   onReset: () => void;
   invoice: ParsedInvoice;
+  logoDataUrl?: string;
 }
 
 export function DownloadResultCard({
   onReset,
   invoice,
+  logoDataUrl,
 }: DownloadResultCardProps) {
   const fileName = invoice.invoiceNumber
     ? `Invoice_${invoice.invoiceNumber}_Processed.pdf`
@@ -48,7 +50,9 @@ export function DownloadResultCard({
           </Button>
 
           <PDFDownloadLink
-            document={<InvoiceDocument invoice={invoice} />}
+            document={
+              <InvoiceDocument invoice={invoice} logoDataUrl={logoDataUrl} />
+            }
             fileName={fileName}
             style={{ textDecoration: "none", width: "100%" }}
           >

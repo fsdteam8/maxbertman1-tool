@@ -64,34 +64,58 @@ export async function extractTextFromPDF(
 
   const pdf = await loadingTask.promise;
   const pageTexts: string[] = [];
-  const items: PDFTextItem[] = [];
+  const allItems: PDFTextItem[] = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
     const content = await page.getTextContent();
     const pageIndex = i - 1;
 
-    const pageItems: string[] = [];
+    const pageItems: PDFTextItem[] = [];
     content.items.forEach((item: any) => {
       if ("str" in item) {
-        pageItems.push(item.str);
         const [scaleX, skewX, skewY, scaleY, x, y] = item.transform;
-        items.push({
+        const pdfItem = {
           str: item.str,
           x,
           y,
           width: item.width,
           height: item.height,
           pageIndex,
-        });
+        };
+        pageItems.push(pdfItem);
+        allItems.push(pdfItem);
       }
     });
-    pageTexts.push(pageItems.join(" "));
+
+    // Group items by Y coordinate (using a small tolerance for "same line")
+    const lines: { y: number; items: PDFTextItem[] }[] = [];
+    const Y_TOLERANCE = 2;
+
+    pageItems.forEach((item) => {
+      let foundLine = lines.find((l) => Math.abs(l.y - item.y) < Y_TOLERANCE);
+      if (!foundLine) {
+        foundLine = { y: item.y, items: [] };
+        lines.push(foundLine);
+      }
+      foundLine.items.push(item);
+    });
+
+    // Sort lines by Y (top to bottom) - PDF coordinates are usually Y-up
+    lines.sort((a, b) => b.y - a.y);
+
+    const reconstructedLines = lines.map((line) => {
+      // Sort items within line by X (left to right)
+      line.items.sort((a, b) => a.x - b.x);
+      return line.items.map((it) => it.str).join("  "); // double space helps retain gaps
+    });
+
+    pageTexts.push(reconstructedLines.join("\n"));
   }
 
   return {
-    rawText: pageTexts.join("\n"),
-    items,
+    rawText: pageTexts.join("\n\n"),
+    items: allItems,
   };
 }
 
@@ -142,8 +166,10 @@ function extractTaxRate(text: string): number | null {
 function extractLineItems(text: string): ParsedLineItem[] {
   const items: ParsedLineItem[] = [];
 
-  // Detect tax row
-  const taxMatch = /(?:Sales\s+)?Tax\s+[\$]?([\d,]+\.?\d*)/i.exec(text);
+  // Detect tax row - look for Tax followed by amount, often at end of line
+  const taxMatch = /(?:Sales\s+)?Tax.*?\s+\$?([\d,]+\.\d{2})(?:\s|$)/i.exec(
+    text,
+  );
   if (taxMatch) {
     items.push({
       title: "Sales Tax",
@@ -156,8 +182,10 @@ function extractLineItems(text: string): ParsedLineItem[] {
     });
   }
 
-  // Detect credit row
-  const creditMatch = /Credit\s+[\$]?(-?[\d,]+\.?\d*)/i.exec(text);
+  // Detect credit row - handles "Credit ($50.00)" or "Credit 50.00"
+  const creditMatch = /Credit.*?\s+[\$]?\(?\s*(-?[\d,]+\.\d{2})\s*\)?/i.exec(
+    text,
+  );
   if (creditMatch) {
     items.push({
       title: "Credit",
@@ -209,11 +237,24 @@ function extractLineItems(text: string): ParsedLineItem[] {
     "service address",
     "qty",
     "rate",
+    "sub-total",
+    "previous balance",
+    "balance forward",
+    "payments/credits",
+    "new charges",
+    "portsmouth",
+    "waterbury",
+    "kingstown",
+    "ri 02",
+    "ct 06",
   ];
 
   const seenAmounts = new Set<string>();
 
   for (const line of logicalLines) {
+    // Skip if line looks like an address (City, ST Zip)
+    if (/[A-Z][a-z]+,?\s+[A-Z]{2}\s+\d{5}/.test(line)) continue;
+
     // Try strict pattern first, then loose
     let match = servicePattern.exec(line) || loosePattern.exec(line);
     if (!match) continue;
@@ -418,15 +459,16 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   ]);
 
   const balanceDue = extractAmount(text, [
-    /Balance\s+Due\s*:?\s*\$?([\d,]+\.?\d*)/i,
-    /Amount\s+Due\s*:?\s*\$?([\d,]+\.?\d*)/i,
-    /Total\s+Due\s*:?\s*\$?([\d,]+\.?\d*)/i,
+    /Balance\s+Due[\s\S]*?\s+\$?([\d,]+\.\d{2})/i,
+    /Amount\s+Due[\s\S]*?\s+\$?([\d,]+\.\d{2})/i,
+    /Total\s+Due[\s\S]*?\s+\$?([\d,]+\.\d{2})/i,
+    /BALANCE\s+DUE[\s\S]*?\s+\$?([\d,]+\.\d{2})/i,
   ]);
 
   const totalAmount = extractAmount(text, [
-    /(?:Grand\s+)?Total\s*:?\s*\$?([\d,]+\.?\d*)/i,
-    /Total\s+Amount\s*:?\s*\$?([\d,]+\.?\d*)/i,
-    /Amount\s+Due\s*:?\s*\$?([\d,]+\.?\d*)/i,
+    /(?:Grand\s+)?Total.*?\s+\$?([\d,]+\.?\d*)/i,
+    /Total\s+Amount.*?\s+\$?([\d,]+\.?\d*)/i,
+    /Amount\s+Due.*?\s+\$?([\d,]+\.?\d*)/i,
   ]);
 
   const subtotal = extractAmount(text, [

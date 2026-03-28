@@ -344,12 +344,12 @@ const s = StyleSheet.create({
     marginBottom: 12,
     color: BLACK,
     lineHeight: 1.5,
+    wordBreak: "break-word",
   },
   addressLine: {
     fontSize: 9,
     lineHeight: 1.5,
     color: BLACK,
-    marginBottom: 12,
     wordBreak: "break-word",
   },
 });

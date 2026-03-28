@@ -343,6 +343,7 @@ const s = StyleSheet.create({
     fontSize: 9,
     marginBottom: 12,
     color: BLACK,
+    lineHeight: 1.5,
   },
   addressLine: {
     fontSize: 9,
@@ -395,7 +396,13 @@ function firstNonEmpty(...args: Array<string | null | undefined>): string {
  * All fields are extracted from the ParsedInvoice object.
  * Missing critical data will result in empty/placeholder rendering, not fallback to System4 defaults.
  */
-export function InvoiceDocument({ invoice }: { invoice: ParsedInvoice }) {
+export function InvoiceDocument({
+  invoice,
+  logoDataUrl,
+}: {
+  invoice: ParsedInvoice;
+  logoDataUrl?: string;
+}) {
   // ── Fixed Company Branding ──
   const companyName = "System4 S.N.E.";
   const companyAddressParts = [
@@ -482,14 +489,25 @@ export function InvoiceDocument({ invoice }: { invoice: ParsedInvoice }) {
           </View>
 
           <View style={s.logoBox}>
-            <Image
-              src="Public/Logo/logo.jpg"
-              style={{
-                width: 132,
-                height: 50,
-                objectFit: "contain",
-              }}
-            />
+            {logoDataUrl ? (
+              <Image
+                src={logoDataUrl}
+                style={{
+                  width: 132,
+                  height: 50,
+                  objectFit: "contain",
+                }}
+              />
+            ) : (
+              <Image
+                src="/Logo/logo.jpg"
+                style={{
+                  width: 132,
+                  height: 50,
+                  objectFit: "contain",
+                }}
+              />
+            )}
           </View>
         </View>
 

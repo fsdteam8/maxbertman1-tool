@@ -5,8 +5,7 @@ import {
   Text,
   View,
   StyleSheet,
-  Svg,
-  Path,
+  Image,
 } from "@react-pdf/renderer";
 import type { ParsedInvoice, ParsedLineItem } from "@/types/invoice";
 
@@ -344,11 +343,14 @@ const s = StyleSheet.create({
     fontSize: 9,
     marginBottom: 12,
     color: BLACK,
+    lineHeight: 1.5,
+    
   },
   addressLine: {
     fontSize: 9,
     lineHeight: 1.5,
     color: BLACK,
+    wordBreak: "break-word",
   },
 });
 
@@ -396,7 +398,13 @@ function firstNonEmpty(...args: Array<string | null | undefined>): string {
  * All fields are extracted from the ParsedInvoice object.
  * Missing critical data will result in empty/placeholder rendering, not fallback to System4 defaults.
  */
-export function InvoiceDocument({ invoice }: { invoice: ParsedInvoice }) {
+export function InvoiceDocument({
+  invoice,
+  logoDataUrl,
+}: {
+  invoice: ParsedInvoice;
+  logoDataUrl?: string;
+}) {
   // ── Fixed Company Branding ──
   const companyName = "System4 S.N.E.";
   const companyAddressParts = [
@@ -483,36 +491,25 @@ export function InvoiceDocument({ invoice }: { invoice: ParsedInvoice }) {
           </View>
 
           <View style={s.logoBox}>
-            <View style={s.logoBlueStripe} />
-            <View style={s.logoContent}>
-              {/* Cyan arc SVG */}
-              <View
+            {logoDataUrl ? (
+              <Image
+                src={logoDataUrl}
                 style={{
-                  position: "absolute",
-                  left: 2,
-                  top: 4,
-                  width: 28,
-                  height: 28,
+                  width: 132,
+                  height: 50,
+                  objectFit: "contain",
                 }}
-              >
-                <Svg width="28" height="28" viewBox="0 0 36 50">
-                  <Path
-                    d="M30,8 A16,18 0 1,0 30,42"
-                    stroke={TEAL}
-                    strokeWidth="3.5"
-                    fill="none"
-                    strokeLinecap="round"
-                  />
-                </Svg>
-              </View>
-              {/* Company branding text */}
-              <View style={s.logoText}>
-                <Text style={s.logoSystemText}>System</Text>
-                <Text style={s.logoNumberText}>4</Text>
-              </View>
-              {/* Subtitle */}
-              <Text style={s.logoSubtitle}>Facility Services Management</Text>
-            </View>
+              />
+            ) : (
+              <Image
+                src="/Logo/logo.jpg"
+                style={{
+                  width: 132,
+                  height: 50,
+                  objectFit: "contain",
+                }}
+              />
+            )}
           </View>
         </View>
 

@@ -117,16 +117,39 @@ export function applyMarkupToInvoice(
 
   const newTotalAmount = round2(newServiceTotal + newTaxTotal - newCreditTotal);
 
+  // If we have an original balance due but no line items or it's mismatched,
+  // we should still mark up the balance due rather than letting it be zeroed.
+  let finalBalanceDue = newTotalAmount;
+  if (
+    (newTotalAmount === 0 ||
+      Math.abs(
+        newTotalAmount - applyMarkup(invoice.balanceDue ?? 0, markupPercent),
+      ) > 2) &&
+    invoice.balanceDue
+  ) {
+    finalBalanceDue = applyMarkup(invoice.balanceDue, markupPercent);
+  }
+
   return {
     ...invoice,
     lineItems: finalMarkedItems,
-    subtotal: newServiceTotal,
-    taxAmount: newTaxTotal > 0 ? newTaxTotal : null,
-    taxRate: hasTax ? originalTaxRate : null,
+    subtotal:
+      newServiceTotal > 0
+        ? newServiceTotal
+        : invoice.subtotal
+          ? applyMarkup(invoice.subtotal, markupPercent)
+          : null,
+    taxAmount:
+      newTaxTotal > 0
+        ? newTaxTotal
+        : invoice.taxAmount
+          ? applyMarkup(invoice.taxAmount, markupPercent)
+          : null,
+    taxRate: hasTax ? originalTaxRate : invoice.taxRate,
     creditAmount:
       newCreditTotal > 0 ? newCreditTotal : (invoice.creditAmount ?? 0),
-    totalAmount: newTotalAmount,
-    balanceDue: newTotalAmount,
+    totalAmount: finalBalanceDue,
+    balanceDue: finalBalanceDue,
   };
 }
 
