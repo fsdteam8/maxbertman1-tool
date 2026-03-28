@@ -22,89 +22,111 @@ import {
  * Apply percentage markup to all monetary fields of an invoice.
  * Line item amounts are marked up individually, then totals are
  * RECALCULATED from the marked-up line items to guarantee consistency.
+ *
+ * KEY BUSINESS RULES:
+ * - Preserve original invoice structure (tax presence/absence)
+ * - If tax exists, recalculate from markup AND preserve original tax rate
+ * - If tax does not exist, do NOT inject tax
+ * - Credits are preserved as-is
+ * - Balance due is recalculated from structured values, never patched
+ *
  * Returns a new, immutable copy — does not mutate the original.
  */
 export function applyMarkupToInvoice(
   invoice: ParsedInvoice,
   markupPercent: number = 1,
 ): ParsedInvoice {
-  const markAmount = (v: number | null) =>
-    v !== null ? applyMarkup(v, markupPercent) : null;
-
   const round2 = (v: number) => Math.round(v * 100) / 100;
 
-  // 1. Mark up each line item's amount and rate
-  const markedLineItems: ParsedLineItem[] = invoice.lineItems.map((item) => ({
-    ...item,
-    amount: markAmount(item.amount),
-    rate: item.rate !== null ? applyMarkup(item.rate, markupPercent) : null,
-  }));
+  // ─── Step 1: Compute original totals BEFORE markup ────────────────
+  const originalServiceTotal = round2(
+    invoice.lineItems
+      .filter((it) => it.type === "service")
+      .reduce((sum, it) => sum + (it.amount ?? 0), 0),
+  );
 
-  // 2. Recalculate totals from marked-up line items
-  const serviceTotal = round2(
+  const originalTaxTotal = round2(
+    invoice.lineItems
+      .filter((it) => it.type === "tax")
+      .reduce((sum, it) => sum + (it.amount ?? 0), 0),
+  );
+
+  // Detect original tax rate (e.g., 6.35% = 0.0635)
+  const hasTax = originalTaxTotal > 0 && originalServiceTotal > 0;
+  const originalTaxRate = hasTax ? originalTaxTotal / originalServiceTotal : 0;
+
+  // ─── Step 2: Mark up ONLY service items ───────────────────────────
+  const markedLineItems: ParsedLineItem[] = invoice.lineItems.map((item) => {
+    if (item.type === "service") {
+      return {
+        ...item,
+        amount:
+          item.amount !== null ? applyMarkup(item.amount, markupPercent) : null,
+        rate: item.rate !== null ? applyMarkup(item.rate, markupPercent) : null,
+      };
+    }
+    // Credits and other types: preserve unchanged
+    return { ...item };
+  });
+
+  // ─── Step 3: Recalculate totals ───────────────────────────────────
+  const newServiceTotal = round2(
     markedLineItems
       .filter((it) => it.type === "service")
       .reduce((sum, it) => sum + (it.amount ?? 0), 0),
   );
 
-  let taxTotal = round2(
-    markedLineItems
-      .filter((it) => it.type === "tax")
-      .reduce((sum, it) => sum + (it.amount ?? 0), 0),
-  );
+  // KEY BUSINESS RULE: Preserve original tax presence/absence
+  // If original had tax, recalculate with original rate applied to new service total
+  // If original had NO tax, do NOT inject tax
+  let finalMarkedItems = [...markedLineItems];
+  let newTaxTotal = 0;
+  let taxRateApplied = originalTaxRate;
 
-  // 3. Always ensure a 1% tax is applied for automation.
-  // If a tax line natively exists (e.g. extracted as $0.00), overwrite its amount to be 1%.
-  // If no tax line exists at all, inject a new one.
-  if (serviceTotal > 0) {
-    const autoTax = round2(serviceTotal * 0.01);
-    const existingTaxItem = markedLineItems.find((it) => it.type === "tax");
+  if (hasTax && originalTaxRate > 0) {
+    // Tax exists: preserve rate, recalculate amount on marked-up service total
+    newTaxTotal = round2(newServiceTotal * originalTaxRate);
 
-    if (existingTaxItem) {
-      existingTaxItem.amount = autoTax;
-      if (
-        !existingTaxItem.description ||
-        existingTaxItem.description === "Sales Tax"
-      ) {
-        existingTaxItem.description = "Sales Tax (1%)";
+    // Update existing tax rows to reflect new amount
+    finalMarkedItems = finalMarkedItems.map((item) => {
+      if (item.type === "tax") {
+        const taxPercent = (originalTaxRate * 100).toFixed(2);
+        return {
+          ...item,
+          title: item.title, // Keep original title
+          description: item.description.includes("%")
+            ? item.description // Keep original description if it has rate
+            : `Tax (${taxPercent}%)`, // Otherwise update with rate
+          amount: newTaxTotal,
+        };
       }
-      taxTotal = autoTax;
-    } else {
-      markedLineItems.push({
-        title: "Sales Tax",
-        description: "Sales Tax (1%)",
-        serviceDateRange: null,
-        quantity: null,
-        rate: null,
-        amount: autoTax,
-        type: "tax",
-      });
-      taxTotal = autoTax;
-    }
+      return item;
+    });
+  } else {
+    // No tax in original: do NOT inject tax
+    // Simply filter out any tax rows if present
+    finalMarkedItems = finalMarkedItems.filter((it) => it.type !== "tax");
   }
 
-  const creditTotal = round2(
-    markedLineItems
+  // Credits: sum unchanged (NOT marked up)
+  const newCreditTotal = round2(
+    finalMarkedItems
       .filter((it) => it.type === "credit")
       .reduce((sum, it) => sum + Math.abs(it.amount ?? 0), 0),
   );
 
-  const newSubtotal = serviceTotal;
-  const newTaxAmount = taxTotal;
-  const newCreditAmount = creditTotal;
-  const newTotalAmount = round2(newSubtotal + newTaxAmount - newCreditAmount);
-  const newBalanceDue = newTotalAmount;
+  const newTotalAmount = round2(newServiceTotal + newTaxTotal - newCreditTotal);
 
   return {
     ...invoice,
-    lineItems: markedLineItems,
-
-    // always populate recalculated values when they exist logically
-    subtotal: newSubtotal,
-    taxAmount: newTaxAmount,
-    creditAmount: newCreditAmount,
+    lineItems: finalMarkedItems,
+    subtotal: newServiceTotal,
+    taxAmount: newTaxTotal > 0 ? newTaxTotal : null,
+    taxRate: hasTax ? originalTaxRate : null,
+    creditAmount:
+      newCreditTotal > 0 ? newCreditTotal : (invoice.creditAmount ?? 0),
     totalAmount: newTotalAmount,
-    balanceDue: newBalanceDue,
+    balanceDue: newTotalAmount,
   };
 }
 

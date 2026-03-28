@@ -56,6 +56,15 @@ export interface ParsedInvoice {
   // Monetary totals
   subtotal: number | null;
   taxAmount: number | null;
+  /** Original tax percentage (e.g., 6.35 for 6.35% tax). Null if tax not present or undetected. */
+  taxRate: number | null;
+  /**
+   * CREDIT SEMANTICS:
+   * - Stored as POSITIVE number (e.g., 50.00 means $50 credit)
+   * - Represents reduction FROM the subtotal
+   * - Used in: balance = subtotal + tax - creditAmount
+   * - Display: shown as ( $50.00 ) in PDF (parentheses, negative adjustment)
+   */
   creditAmount: number | null;
   totalAmount: number | null;
 

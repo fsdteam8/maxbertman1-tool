@@ -1,12 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { 
-  FileUploadDropzone 
-} from "@/components/FileUploadDropzone";
-import { 
-  ProcessingStatusBanner, 
-  type ProcessingStep 
+import { FileUploadDropzone } from "@/components/FileUploadDropzone";
+import {
+  ProcessingStatusBanner,
+  type ProcessingStep,
 } from "@/components/ProcessingStatusBanner";
 import { InvoiceHeaderCard } from "@/components/InvoiceHeaderCard";
 import { InvoicePartyDetails } from "@/components/InvoicePartyDetails";
@@ -26,10 +24,13 @@ export default function ToolPage() {
   // Workflow State
   const [step, setStep] = useState<ProcessingStep>("idle");
   const [error, setError] = useState<string | null>(null);
-  
+
   // Data State
-  const [parsedInvoice, setParsedInvoice] = useState<ParsedInvoice | null>(null);
-  const [processedInvoice, setProcessedInvoice] = useState<ProcessedInvoice | null>(null);
+  const [parsedInvoice, setParsedInvoice] = useState<ParsedInvoice | null>(
+    null,
+  );
+  const [processedInvoice, setProcessedInvoice] =
+    useState<ProcessedInvoice | null>(null);
   const [poNumber, setPoNumber] = useState("");
   const [originalFile, setOriginalFile] = useState<File | null>(null);
 
@@ -38,20 +39,20 @@ export default function ToolPage() {
     setError(null);
     setStep("uploading");
     setOriginalFile(file); // Retain original for overlay generation
-    
+
     try {
       const formData = new FormData();
       formData.append("file", file);
-      
+
       setStep("parsing");
       const res = await fetch("/api/invoice/parse", {
         method: "POST",
         body: formData,
       });
-      
+
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
-      
+
       setParsedInvoice(data.invoice);
       setStep("idle"); // Done with async part, show review UI
     } catch (err: any) {
@@ -62,10 +63,10 @@ export default function ToolPage() {
 
   const handleProcess = async () => {
     if (!parsedInvoice) return;
-    
+
     setError(null);
     setStep("processing");
-    
+
     try {
       const res = await fetch("/api/invoice/process", {
         method: "POST",
@@ -76,10 +77,10 @@ export default function ToolPage() {
           markupPercent: 1, // 1% manual workflow
         }),
       });
-      
+
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
-      
+
       setProcessedInvoice(data.processed);
       setStep("idle");
     } catch (err: any) {
@@ -90,28 +91,25 @@ export default function ToolPage() {
 
   const handleDownload = async () => {
     if (!processedInvoice) return;
-    
+
     setStep("generating");
     try {
       // Send invoice JSON + original PDF file via FormData for overlay generation
       const formData = new FormData();
       formData.append("invoice", JSON.stringify(processedInvoice.markedUp));
-      if (originalFile) {
-        formData.append("originalPdf", originalFile);
-      }
 
       const res = await fetch("/api/invoice/generate", {
         method: "POST",
         body: formData,
       });
-      
+
       if (!res.ok) throw new Error("Failed to generate PDF");
-      
+
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = processedInvoice.markedUp.invoiceNumber 
+      a.download = processedInvoice.markedUp.invoiceNumber
         ? `Invoice_${processedInvoice.markedUp.invoiceNumber}_Processed.pdf`
         : "Processed_Invoice.pdf";
       document.body.appendChild(a);
@@ -135,14 +133,27 @@ export default function ToolPage() {
 
   // UI Sections
   const renderContent = () => {
-    if (step === "error") return <ErrorState message={error || ""} onRetry={reset} />;
-    if (step === "complete") return <DownloadResultCard onReset={reset} onDownload={handleDownload} />;
-    
+    if (step === "error")
+      return <ErrorState message={error || ""} onRetry={reset} />;
+    if (step === "complete" && processedInvoice)
+      return (
+        <DownloadResultCard
+          onReset={reset}
+          invoice={processedInvoice.markedUp}
+        />
+      );
+
     // 1. Initial State: Upload
-    if (!parsedInvoice && (step === "idle" || step === "uploading" || step === "parsing")) {
+    if (
+      !parsedInvoice &&
+      (step === "idle" || step === "uploading" || step === "parsing")
+    ) {
       return (
         <div className="space-y-12">
-          <FileUploadDropzone onFileSelect={handleFileSelect} isLoading={step !== "idle"} />
+          <FileUploadDropzone
+            onFileSelect={handleFileSelect}
+            isLoading={step !== "idle"}
+          />
           <EmailAutomationArchitectureCard />
         </div>
       );
@@ -153,37 +164,45 @@ export default function ToolPage() {
       return (
         <div className="space-y-10 animate-fade-in">
           <div className="flex items-center justify-between">
-            <Button variant="ghost" onClick={reset} className="font-bold text-muted-foreground hover:text-foreground">
+            <Button
+              variant="ghost"
+              onClick={reset}
+              className="font-bold text-muted-foreground hover:text-foreground"
+            >
               <ChevronLeft className="w-4 h-4 mr-2" />
               CANCEL
             </Button>
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-              <span className="text-xs font-black uppercase tracking-widest text-primary">Live Review Session</span>
+              <span className="text-xs font-black uppercase tracking-widest text-primary">
+                Live Review Session
+              </span>
             </div>
           </div>
 
           <InvoiceHeaderCard invoice={parsedInvoice} />
-          
+
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 space-y-8">
-              <LineItemsEditor 
-                items={parsedInvoice.lineItems} 
-                onChange={(items) => setParsedInvoice({ ...parsedInvoice, lineItems: items })} 
+              <LineItemsEditor
+                items={parsedInvoice.lineItems}
+                onChange={(items) =>
+                  setParsedInvoice({ ...parsedInvoice, lineItems: items })
+                }
               />
               <InvoicePartyDetails invoice={parsedInvoice} />
               <ExtractedTextViewer rawText={parsedInvoice.extractedRawText} />
             </div>
-            
+
             <div className="space-y-8">
-              <PurchaseOrderReplacementCard 
+              <PurchaseOrderReplacementCard
                 detected={parsedInvoice.poPlaceholderDetected}
                 matchedText={parsedInvoice.poOriginalText}
                 poNumber={poNumber}
                 onPOChange={setPoNumber}
               />
-              
-              <Button 
+
+              <Button
                 onClick={handleProcess}
                 className="w-full h-20 rounded-3xl font-black text-xl tracking-tighter bg-primary hover:bg-primary/90 shadow-2xl shadow-primary/20 group"
               >
@@ -194,8 +213,11 @@ export default function ToolPage() {
               <div className="glass-card p-6 rounded-2xl flex items-start space-x-3 opacity-60">
                 <Sparkles className="w-5 h-5 text-accent shrink-0" />
                 <p className="text-[10px] leading-relaxed font-bold uppercase tracking-wider text-muted-foreground">
-                  Our system extracted {parsedInvoice.lineItems.length} line items with 
-                  {parsedInvoice.lowConfidence ? " low-confidence " : " high-confidence "} 
+                  Our system extracted {parsedInvoice.lineItems.length} line
+                  items with
+                  {parsedInvoice.lowConfidence
+                    ? " low-confidence "
+                    : " high-confidence "}
                   accuracy. Please verify values before proceeding.
                 </p>
               </div>
@@ -209,13 +231,17 @@ export default function ToolPage() {
     if (processedInvoice) {
       return (
         <div className="space-y-8">
-          <Button variant="ghost" onClick={() => setProcessedInvoice(null)} className="font-bold text-muted-foreground">
+          <Button
+            variant="ghost"
+            onClick={() => setProcessedInvoice(null)}
+            className="font-bold text-muted-foreground"
+          >
             <ChevronLeft className="w-4 h-4 mr-2" />
             BACK TO EDITOR
           </Button>
-          <InvoicePreviewCard 
-            processed={processedInvoice} 
-            onDownload={handleDownload} 
+          <InvoicePreviewCard
+            processed={processedInvoice}
+            onDownload={handleDownload}
             isDownloading={step === "generating"}
           />
         </div>
@@ -242,15 +268,14 @@ export default function ToolPage() {
             Invoice <span className="gradient-text">Automation</span> Console
           </h1>
           <p className="text-muted-foreground text-sm font-medium tracking-tight max-w-sm mx-auto opacity-70">
-            Secure, stateless document transformation with real-time markup and PO resolution.
+            Secure, stateless document transformation with real-time markup and
+            PO resolution.
           </p>
         </header>
 
         <ProcessingStatusBanner currentStep={step} error={error} />
 
-        <div className="mt-8">
-          {renderContent()}
-        </div>
+        <div className="mt-8">{renderContent()}</div>
       </main>
 
       {/* Persistent Meta Footer */}

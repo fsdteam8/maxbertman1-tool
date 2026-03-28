@@ -4,18 +4,26 @@
  * Targets phrases found in real invoice samples such as:
  *   "PO# pending valid purchase order from Ryder."
  *   "Pending Purchase Order"
+ *   "Awaiting PO"
+ *   "PO TBD"
  *   and similar patterns.
  */
 
 /** List of regex patterns that identify PO placeholders in invoice text */
 const PO_PLACEHOLDER_PATTERNS: RegExp[] = [
-  /PO#?\s*pending\s+valid\s+purchase\s+order[^.]*\./gi,
-  /pending\s+valid\s+purchase\s+order[^.]*\./gi,
+  /PO#?\s*pending\s+valid\s+purchase\s+order[^.]*\.?/gi,
+  /pending\s+valid\s+purchase\s+order[^.]*\.?/gi,
   /pending\s+purchase\s+order/gi,
   /purchase\s+order\s+pending/gi,
   /PO#?\s*TBD/gi,
+  /TBD\s*(?:[-–]|for)?\s*(?:purchase\s+)?order/gi,
   /PO#?\s*pending/gi,
-  /TBD\s*[-–]\s*purchase\s+order/gi,
+  /pending\s+(?:PO|purchase\s+order)/gi,
+  /awaiting\s+PO/gi,
+  /awaiting\s+purchase\s+order/gi,
+  /PO#?\s*(?:awaiting|TBA|to\s+be\s+assigned)/gi,
+  /PO#?\s*\[\s*pending\s*\]/gi,
+  /PO#?\s*\(\s*pending\s*\)/gi,
 ];
 
 export interface PODetectionResult {
@@ -57,6 +65,27 @@ export function replacePOPlaceholder(text: string, poNumber: string): string {
     result = result.replace(pattern, `PO# ${poNumber}`);
   }
   return result;
+}
+
+/**
+ * Replace an existing PO number with a new one.
+ * Matches patterns like "PO# 47382" and replaces with new number.
+ * Word-boundary matching prevents partial matches (e.g., won't match "PO# 4738299").
+ *
+ * @param text - Input text
+ * @param oldPoNumber - The current PO number to find
+ * @param newPoNumber - The new PO number to insert
+ * @returns Updated text with old PO replaced by new
+ */
+export function replaceExistingPO(
+  text: string,
+  oldPoNumber: string,
+  newPoNumber: string,
+): string {
+  // Escape special regex chars in PO numbers
+  const escaped = oldPoNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`PO#?\\s*${escaped}(?![\\w-])`, "gi");
+  return text.replace(pattern, `PO# ${newPoNumber}`);
 }
 
 /**

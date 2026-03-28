@@ -113,6 +113,28 @@ function extractAmount(text: string, patterns: RegExp[]): number | null {
   return parseCurrencyString(raw);
 }
 
+/**
+ * Extract the original tax percentage rate from invoice text.
+ * Looks for patterns like "6.35%", "6.35 percent", "tax rate: 7.25%", etc.
+ * Returns null if no rate is found or cannot be parsed.
+ */
+function extractTaxRate(text: string): number | null {
+  const patterns = [
+    /(\d+\.?\d*)\s*%\s*(?:sales\s+)?tax/i,
+    /(?:sales\s+)?tax\s+rate[:\s]*(\d+\.?\d*)\s*%/i,
+    /tax[:=\s]*(\d+\.?\d*)\s*%/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(text);
+    if (match?.[1]) {
+      const rate = parseFloat(match[1]);
+      return isNaN(rate) ? null : rate;
+    }
+  }
+  return null;
+}
+
 // ─────────────────────────────────────────────
 // Line Item Extraction
 // ─────────────────────────────────────────────
@@ -148,12 +170,19 @@ function extractLineItems(text: string): ParsedLineItem[] {
     });
   }
 
-  // Pre-split raw text into logical lines.
-  // pdfjs-dist joins page items with spaces, so we split on double-space,
-  // newline, or patterns that indicate a new conceptual line.
+  // IMPROVED: Split on meaningful boundaries
+  // If line ends with money, it's a complete item
+  // Otherwise split on multiple spaces (for wrapped text)
   const logicalLines = text
     .split(/\n+/)
-    .flatMap((line) => line.split(/\s{2,}/))
+    .flatMap((line) => {
+      // Check if line ends with a currency amount (terminus of an item)
+      if (/\$?\d+[\,.]?\d{0,2}(\s*\)?)?$/.test(line.trim())) {
+        return [line];
+      }
+      // Otherwise, split on multiple spaces
+      return line.split(/\s{2,}/);
+    })
     .map((l) => l.trim())
     .filter(Boolean);
 
@@ -200,7 +229,15 @@ function extractLineItems(text: string): ParsedLineItem[] {
     seenAmounts.add(amountStr);
 
     // Check if PO placeholder is in surrounding context
-    const lineIndex = text.indexOf(line);
+    // Use indexOf with an offset to avoid matching the same line multiple times
+    let lineIndex = -1;
+    let searchStart = 0;
+    for (let k = 0; k < logicalLines.indexOf(line) + 1; k++) {
+      lineIndex = text.indexOf(line, searchStart);
+      if (lineIndex === -1) break;
+      searchStart = lineIndex + 1;
+    }
+    if (lineIndex === -1) lineIndex = text.indexOf(line);
     const contextStart = Math.max(0, lineIndex - 200);
     const context = text.slice(contextStart, lineIndex + line.length + 100);
     const poCheck = detectPOPlaceholder(context);
@@ -254,14 +291,15 @@ function extractBlock(
   const blockStart = startMatch.index + startMatch[0].length;
   const remaining = text.slice(blockStart);
   const endMatch = endPattern.exec(remaining);
+  // Increased limit from 300 to 800 characters to capture full address blocks
   const block = endMatch
     ? remaining.slice(0, endMatch.index)
-    : remaining.slice(0, 300);
+    : remaining.slice(0, 800);
   return block
     .split(/[\n\r]+/)
     .map((l) => l.trim())
     .filter(Boolean)
-    .slice(0, 6);
+    .slice(0, 12); // Increased from 6 to 12 lines to capture full addresses
 }
 
 // ─────────────────────────────────────────────
@@ -358,8 +396,9 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
 
   // Header fields
   const invoiceNumber = extractField(text, [
-    /Invoice\s*#\s*:?\s*(\d+)/i,
-    /Invoice\s+Number\s*:?\s*(\d+)/i,
+    /Invoice\s*#\s*:?\s*([\w\-]+)/i,
+    /Invoice\s+Number\s*:?\s*([\w\-]+)/i,
+    /INV\s*#?\s*:?\s*([\w\-]+)/i,
   ]);
 
   const customerNumber = extractField(text, [
@@ -386,14 +425,21 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
 
   const totalAmount = extractAmount(text, [
     /(?:Grand\s+)?Total\s*:?\s*\$?([\d,]+\.?\d*)/i,
+    /Total\s+Amount\s*:?\s*\$?([\d,]+\.?\d*)/i,
     /Amount\s+Due\s*:?\s*\$?([\d,]+\.?\d*)/i,
   ]);
 
-  const subtotal = extractAmount(text, [/Subtotal\s*:?\s*\$?([\d,]+\.?\d*)/i]);
+  const subtotal = extractAmount(text, [
+    /Subtotal\s*:?\s*\$?([\d,]+\.?\d*)/i,
+    /Sub[\\s-]?Total\s*:?\s*\$?([\d,]+\.?\d*)/i,
+    /Services\s+Total\s*:?\s*\$?([\d,]+\.?\d*)/i,
+  ]);
 
   const taxAmount = extractAmount(text, [
     /(?:Sales\s+)?Tax\s*:?\s*\$?([\d,]+\.?\d*)/i,
   ]);
+
+  const taxRate = extractTaxRate(text);
 
   const creditAmount = extractAmount(text, [
     /Credit\s*:?\s*\$?(-?[\d,]+\.?\d*)/i,
@@ -401,8 +447,8 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
 
   // Issuer block
   const issuerName = extractField(text, [
-    /^(System4[^\n\r]*)/im,
-    /(?:From|Issuer|Company)\s*:?\s*([^\n\r]+)/i,
+    /(?:From|Issuer|Company\s+Name|Billed By)\s*:?\s*([^\n\r]+)/i,
+    /^([A-Z][A-Za-z0-9\s.&,()-]*)/m,
   ]);
 
   const issuerEmail = extractField(text, [
@@ -413,26 +459,26 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   // Address blocks
   const billToLines = extractBlock(
     text,
-    /Bill\s+To\s*:?/i,
-    /Service\s+Address|Remit\s+To|Invoice\s*#|Customer\s*#/i,
+    /(?:Bill\s+To|Billed\s+To|Customer)\s*:?/i,
+    /Service\s+Address|Remit\s+To|Invoice|Customer\s*#|AMOUNT|TOTAL/i,
   );
 
   const issuerLines = extractBlock(
     text,
-    /(?:System4|Issuer|From)\s/i,
-    /Bill\s+To|Invoice\s*#/i,
+    /(?:From|Issuer|Company|Billed\s+By)\s*:?/i,
+    /Bill\s+To|Service\s+Address|Invoice/i,
   );
 
   const serviceAddressLines = extractBlock(
     text,
-    /Service\s+Address\s*:?/i,
-    /Remit\s+To|Total|Balance|Invoice\s*#/i,
+    /(?:Service\s+Address|Ship\s+To|Deliver\s+To)\s*:?/i,
+    /Remit\s+To|TOTAL|BALANCE|AMOUNT|Tax|PAGE/i,
   );
 
   const remitToLines = extractBlock(
     text,
-    /Remit\s+To\s*:?/i,
-    /Thank\s+you|Page\s+\d|END/i,
+    /(?:Remit\s+To|Pay\s+To|Send\s+Payment)\s*:?/i,
+    /SERVICE\s+ADDRESS|THANK|NOTE|PAGE|^$\n^$/i,
   );
 
   // PO placeholder detection
@@ -472,6 +518,7 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
     lineItems,
     subtotal,
     taxAmount,
+    taxRate,
     creditAmount,
     totalAmount,
     poPlaceholderDetected: poCheck.detected,
