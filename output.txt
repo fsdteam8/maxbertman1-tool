@@ -1,0 +1,15 @@
+
+━━━ Testing PDF Processor for: Invoice48289 with sales tax.pdf ━━━
+Original buffer size: 227905 bytes
+Uint8Array size: 227905 bytes
+Calling processInvoice...
+extractWords: starting
+extractWords: pdfjs loaded
+extractWords: loading task created
+extractWords: pdf promise resolved
+extractWords: got page 1
+Warning: UnknownErrorException: Ensure that the `standardFontDataUrl` API parameter is provided.
+Warning: UnknownErrorException: Ensure that the `standardFontDataUrl` API parameter is provided.
+extractWords: got text content (67 items)
+processInvoice returned!
+✅ Success! Processed PDF saved to: /home/khalid-hossain/Desktop/work-space/invoice--editor/test-processed-output.pdf

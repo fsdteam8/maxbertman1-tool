@@ -9,7 +9,7 @@ import path from "path";
 import { extractTextFromPDF } from "../lib/invoice-parser";
 
 async function main() {
-  const pdfName = "Invoice48289 with sales tax.pdf";
+  const pdfName = "Invoice48572 (1) (1).pdf";
   const pdfPath = path.join(process.cwd(), pdfName);
 
   if (!fs.existsSync(pdfPath)) {
