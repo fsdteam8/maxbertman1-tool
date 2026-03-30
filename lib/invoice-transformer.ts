@@ -16,6 +16,7 @@ import { applyMarkup } from "@/lib/currency";
 import {
   detectPOPlaceholder,
   replacePOPlaceholder,
+  replaceExistingPO,
 } from "@/lib/text-replacement";
 
 /**
@@ -37,119 +38,43 @@ export function applyMarkupToInvoice(
   markupPercent: number = 1,
 ): ParsedInvoice {
   const round2 = (v: number) => Math.round(v * 100) / 100;
+  const factor = 1 + markupPercent / 100;
 
-  // ─── Step 1: Compute original totals BEFORE markup ────────────────
-  const originalServiceTotal = round2(
-    invoice.lineItems
-      .filter((it) => it.type === "service")
-      .reduce((sum, it) => sum + (it.amount ?? 0), 0),
-  );
-
-  const originalTaxTotal = round2(
-    invoice.lineItems
-      .filter((it) => it.type === "tax")
-      .reduce((sum, it) => sum + (it.amount ?? 0), 0),
-  );
-
-  // Detect original tax rate (e.g., 6.35% = 0.0635)
-  const hasTax = originalTaxTotal > 0 && originalServiceTotal > 0;
-  const originalTaxRate = hasTax ? originalTaxTotal / originalServiceTotal : 0;
-
-  // ─── Step 2: Mark up ONLY service items ───────────────────────────
+  // ─── Step 1: Mark up line items ──────────────────────────────────
+  // Key requirement: "All monetary amounts on the invoice must be silently multiplied by 1.01"
   const markedLineItems: ParsedLineItem[] = invoice.lineItems.map((item) => {
-    if (item.type === "service") {
-      return {
-        ...item,
-        amount:
-          item.amount !== null ? applyMarkup(item.amount, markupPercent) : null,
-        rate: item.rate !== null ? applyMarkup(item.rate, markupPercent) : null,
-      };
-    }
-    // Credits and other types: preserve unchanged
-    return { ...item };
+    return {
+      ...item,
+      amount: item.amount !== null ? round2(item.amount * factor) : null,
+      rate: item.rate !== null ? round2(item.rate * factor) : null,
+    };
   });
 
-  // ─── Step 3: Recalculate totals ───────────────────────────────────
-  const newServiceTotal = round2(
-    markedLineItems
-      .filter((it) => it.type === "service")
-      .reduce((sum, it) => sum + (it.amount ?? 0), 0),
-  );
+  // ─── Step 2: Mark up header totals ───────────────────────────────
+  // Recalculate component totals if they exist in the original
+  const subtotal =
+    invoice.subtotal !== null ? round2(invoice.subtotal * factor) : null;
+  const taxAmount =
+    invoice.taxAmount !== null ? round2(invoice.taxAmount * factor) : null;
+  const creditAmount =
+    invoice.creditAmount !== null
+      ? round2(invoice.creditAmount * factor)
+      : null;
 
-  // KEY BUSINESS RULE: Preserve original tax presence/absence
-  // If original had tax, recalculate with original rate applied to new service total
-  // If original had NO tax, do NOT inject tax
-  let finalMarkedItems = [...markedLineItems];
-  let newTaxTotal = 0;
-  let taxRateApplied = originalTaxRate;
-
-  if (hasTax && originalTaxRate > 0) {
-    // Tax exists: preserve rate, recalculate amount on marked-up service total
-    newTaxTotal = round2(newServiceTotal * originalTaxRate);
-
-    // Update existing tax rows to reflect new amount
-    finalMarkedItems = finalMarkedItems.map((item) => {
-      if (item.type === "tax") {
-        const taxPercent = (originalTaxRate * 100).toFixed(2);
-        return {
-          ...item,
-          title: item.title, // Keep original title
-          description: item.description.includes("%")
-            ? item.description // Keep original description if it has rate
-            : `Tax (${taxPercent}%)`, // Otherwise update with rate
-          amount: newTaxTotal,
-        };
-      }
-      return item;
-    });
-  } else {
-    // No tax in original: do NOT inject tax
-    // Simply filter out any tax rows if present
-    finalMarkedItems = finalMarkedItems.filter((it) => it.type !== "tax");
-  }
-
-  // Credits: sum unchanged (NOT marked up)
-  const newCreditTotal = round2(
-    finalMarkedItems
-      .filter((it) => it.type === "credit")
-      .reduce((sum, it) => sum + Math.abs(it.amount ?? 0), 0),
-  );
-
-  const newTotalAmount = round2(newServiceTotal + newTaxTotal - newCreditTotal);
-
-  // If we have an original balance due but no line items or it's mismatched,
-  // we should still mark up the balance due rather than letting it be zeroed.
-  let finalBalanceDue = newTotalAmount;
-  if (
-    (newTotalAmount === 0 ||
-      Math.abs(
-        newTotalAmount - applyMarkup(invoice.balanceDue ?? 0, markupPercent),
-      ) > 2) &&
-    invoice.balanceDue
-  ) {
-    finalBalanceDue = applyMarkup(invoice.balanceDue, markupPercent);
-  }
+  // Balance due and total amount must also be multiplied by 1.01
+  const balanceDue =
+    invoice.balanceDue !== null ? round2(invoice.balanceDue * factor) : null;
+  const totalAmount =
+    invoice.totalAmount !== null ? round2(invoice.totalAmount * factor) : null;
 
   return {
     ...invoice,
-    lineItems: finalMarkedItems,
-    subtotal:
-      newServiceTotal > 0
-        ? newServiceTotal
-        : invoice.subtotal
-          ? applyMarkup(invoice.subtotal, markupPercent)
-          : null,
-    taxAmount:
-      newTaxTotal > 0
-        ? newTaxTotal
-        : invoice.taxAmount
-          ? applyMarkup(invoice.taxAmount, markupPercent)
-          : null,
-    taxRate: hasTax ? originalTaxRate : invoice.taxRate,
-    creditAmount:
-      newCreditTotal > 0 ? newCreditTotal : (invoice.creditAmount ?? 0),
-    totalAmount: finalBalanceDue,
-    balanceDue: finalBalanceDue,
+    lineItems: markedLineItems,
+    subtotal,
+    taxAmount,
+    creditAmount,
+    totalAmount,
+    balanceDue,
   };
 }
 
@@ -161,17 +86,33 @@ export function applyPOReplacement(
   invoice: ParsedInvoice,
   poNumber: string,
 ): ParsedInvoice {
-  const updatedLineItems: ParsedLineItem[] = invoice.lineItems.map((item) => ({
-    ...item,
-    description: replacePOPlaceholder(item.description, poNumber),
-    title: replacePOPlaceholder(item.title, poNumber),
-  }));
+  const updatedLineItems: ParsedLineItem[] = invoice.lineItems.map((item) => {
+    let desc = item.description;
+    let title = item.title;
+
+    // Case A: Placeholder
+    desc = replacePOPlaceholder(desc, poNumber);
+    title = replacePOPlaceholder(title, poNumber);
+
+    // Case B: Existing PO
+    if (invoice.poNumber) {
+      desc = replaceExistingPO(desc, invoice.poNumber, poNumber);
+      title = replaceExistingPO(title, invoice.poNumber, poNumber);
+    }
+
+    return {
+      ...item,
+      description: desc,
+      title: title,
+    };
+  });
 
   return {
     ...invoice,
     lineItems: updatedLineItems,
     poPlaceholderDetected: false, // has been resolved
     poOriginalText: invoice.poOriginalText, // keep for audit trail in UI
+    poNumber: poNumber, // updated existing PO field
   };
 }
 
@@ -189,13 +130,17 @@ export function buildProcessedInvoice(
   // Apply markup first
   let markedUp = applyMarkupToInvoice(original, markupPercent);
 
-  // Apply PO replacement if a PO number was provided and a placeholder exists
+  // Apply PO replacement if a PO number was provided
+  const hasPlaceholder =
+    original.poPlaceholderDetected ||
+    original.lineItems.some(
+      (item) => detectPOPlaceholder(item.description).detected,
+    );
+  const hasExistingPO = !!original.poNumber;
+
   const poReplacementApplied = !!(
     poNumber &&
-    (original.poPlaceholderDetected ||
-      original.lineItems.some(
-        (item) => detectPOPlaceholder(item.description).detected,
-      ))
+    (hasPlaceholder || hasExistingPO)
   );
 
   if (poNumber && poReplacementApplied) {

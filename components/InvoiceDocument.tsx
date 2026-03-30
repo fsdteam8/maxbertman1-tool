@@ -423,13 +423,6 @@ export function InvoiceDocument({
   // Use extracted remit lines ONLY - do NOT construct from defaults
   let remitLines = cleanLines(invoice.remitToLines);
 
-  // Calculate service total for 1% sales tax
-  const serviceTotal = invoice.lineItems
-    .filter((item) => item.type === "service")
-    .reduce((sum, item) => sum + (item.amount || 0), 0);
-
-  const salesTaxAmount = serviceTotal * 0.01;
-
   // Rows mapping
   const renderRows = invoice.lineItems.map((item) => {
     let serviceLabel = "";
@@ -449,25 +442,8 @@ export function InvoiceDocument({
     };
   });
 
-  // Insert 1% sales tax row after services
-  const serviceItemIndex = renderRows.findIndex(
-    (row) => row.service === "Services",
-  );
-  if (serviceItemIndex !== -1) {
-    renderRows.splice(serviceItemIndex + 1, 0, {
-      service: "Tax",
-      activityLines: ["Sales Tax (1%)"],
-      qty: "",
-      rate: "",
-      amount: formatAmountNoSymbol(salesTaxAmount),
-    });
-  }
-
-  // Calculate new balance due including 1% sales tax
-  const updatedBalanceDue = (invoice.balanceDue || 0) + salesTaxAmount;
-
   const balanceDueText = moneyText(
-    updatedBalanceDue,
+    invoice.balanceDue,
     invoice.totalAmount,
     invoice.subtotal,
   );

@@ -1,296 +1,336 @@
 "use client";
 
-import React, { useState } from "react";
-import { FileUploadDropzone } from "@/components/FileUploadDropzone";
+import React, { useState, useCallback } from "react";
 import {
-  ProcessingStatusBanner,
-  type ProcessingStep,
-} from "@/components/ProcessingStatusBanner";
-import { InvoiceHeaderCard } from "@/components/InvoiceHeaderCard";
-import { InvoicePartyDetails } from "@/components/InvoicePartyDetails";
-import { LineItemsEditor } from "@/components/LineItemsEditor";
-import { PurchaseOrderReplacementCard } from "@/components/PurchaseOrderReplacementCard";
-import { ExtractedTextViewer } from "@/components/ExtractedTextViewer";
-import { InvoicePreviewCard } from "@/components/InvoicePreviewCard";
-import { DownloadResultCard } from "@/components/DownloadResultCard";
-import { EmptyState } from "@/components/EmptyState";
-import { ErrorState } from "@/components/ErrorState";
-import { EmailAutomationArchitectureCard } from "@/components/EmailAutomationArchitectureCard";
+  Sparkles,
+  Upload,
+  FileText,
+  Download,
+  Loader2,
+  AlertCircle,
+  CheckCircle2,
+  RotateCcw,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ArrowRight, ChevronLeft, Send, Sparkles } from "lucide-react";
-import type { ParsedInvoice, ProcessedInvoice } from "@/types/invoice";
+
+type ToolStep = "idle" | "processing" | "done" | "error";
 
 export default function ToolPage() {
-  // Workflow State
-  const [step, setStep] = useState<ProcessingStep>("idle");
+  const [step, setStep] = useState<ToolStep>("idle");
   const [error, setError] = useState<string | null>(null);
-
-  // Data State
-  const [parsedInvoice, setParsedInvoice] = useState<ParsedInvoice | null>(
-    null,
-  );
-  const [processedInvoice, setProcessedInvoice] =
-    useState<ProcessedInvoice | null>(null);
-  const [logoDataUrl, setLogoDataUrl] = useState<string | undefined>();
+  const [file, setFile] = useState<File | null>(null);
   const [poNumber, setPoNumber] = useState("");
-  const [originalFile, setOriginalFile] = useState<File | null>(null);
+  const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [resultFilename, setResultFilename] = useState("Processed_Invoice.pdf");
+  const [isDragging, setIsDragging] = useState(false);
 
-  // Handlers
-  const handleFileSelect = async (file: File) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (selected) {
+      if (
+        selected.type !== "application/pdf" &&
+        !selected.name.toLowerCase().endsWith(".pdf")
+      ) {
+        setError("Please upload a PDF file.");
+        return;
+      }
+      setFile(selected);
+      setError(null);
+    }
+  };
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) {
+      if (
+        dropped.type !== "application/pdf" &&
+        !dropped.name.toLowerCase().endsWith(".pdf")
+      ) {
+        setError("Please upload a PDF file.");
+        return;
+      }
+      setFile(dropped);
+      setError(null);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  const handleSubmit = async () => {
+    if (!file) {
+      setError("Please upload an invoice PDF first.");
+      return;
+    }
+
+    setStep("processing");
     setError(null);
-    setStep("uploading");
-    setOriginalFile(file); // Retain original for overlay generation
 
     try {
       const formData = new FormData();
       formData.append("file", file);
+      if (poNumber.trim()) {
+        formData.append("poNumber", poNumber.trim());
+      }
 
-      setStep("parsing");
-      const res = await fetch("/api/invoice/parse", {
+      const res = await fetch("/api/invoice/process-pdf", {
         method: "POST",
         body: formData,
       });
 
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error);
-
-      setParsedInvoice(data.invoice);
-      setLogoDataUrl(data.logoDataUrl);
-      setStep("idle"); // Done with async part, show review UI
-    } catch (err: any) {
-      setError(err.message || "Failed to process PDF.");
-      setStep("error");
-    }
-  };
-
-  const handleProcess = async () => {
-    if (!parsedInvoice) return;
-
-    setError(null);
-    setStep("processing");
-
-    try {
-      const res = await fetch("/api/invoice/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          invoice: parsedInvoice,
-          poNumber: poNumber || undefined,
-          markupPercent: 1, // 1% manual workflow
-        }),
-      });
-
-      const data = await res.json();
-      if (!data.success) throw new Error(data.error);
-
-      setProcessedInvoice(data.processed);
-      setStep("idle");
-    } catch (err: any) {
-      setError(err.message || "Failed to run business rules.");
-      setStep("error");
-    }
-  };
-
-  const handleDownload = async () => {
-    if (!processedInvoice) return;
-
-    setStep("generating");
-    try {
-      // Send invoice JSON + original PDF file via FormData for overlay generation
-      const formData = new FormData();
-      formData.append("invoice", JSON.stringify(processedInvoice.markedUp));
-
-      const res = await fetch("/api/invoice/generate", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) throw new Error("Failed to generate PDF");
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({ error: "Server error" }));
+        throw new Error(data.error || `Processing failed (${res.status})`);
+      }
 
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = processedInvoice.markedUp.invoiceNumber
-        ? `Invoice_${processedInvoice.markedUp.invoiceNumber}_Processed.pdf`
-        : "Processed_Invoice.pdf";
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      setStep("complete");
+
+      // Extract filename from Content-Disposition header
+      const disposition = res.headers.get("Content-Disposition");
+      let fname = "Processed_Invoice.pdf";
+      if (disposition) {
+        const match = /filename="?([^";\n]+)"?/.exec(disposition);
+        if (match) fname = match[1];
+      }
+
+      setResultUrl(url);
+      setResultFilename(fname);
+      setStep("done");
     } catch (err: any) {
-      setError(err.message || "Failed to download PDF.");
+      setError(err.message || "Failed to process the invoice.");
       setStep("error");
     }
   };
 
-  const reset = () => {
-    setStep("idle");
-    setError(null);
-    setParsedInvoice(null);
-    setProcessedInvoice(null);
-    setLogoDataUrl(undefined);
-    setPoNumber("");
-    setOriginalFile(null);
+  const handleDownload = () => {
+    if (!resultUrl) return;
+    const a = document.createElement("a");
+    a.href = resultUrl;
+    a.download = resultFilename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
   };
 
-  // UI Sections
-  const renderContent = () => {
-    if (step === "error")
-      return <ErrorState message={error || ""} onRetry={reset} />;
-    if (step === "complete" && processedInvoice)
-      return (
-        <DownloadResultCard
-          onReset={reset}
-          invoice={processedInvoice.markedUp}
-          logoDataUrl={logoDataUrl}
-        />
-      );
-
-    // 1. Initial State: Upload
-    if (
-      !parsedInvoice &&
-      (step === "idle" || step === "uploading" || step === "parsing")
-    ) {
-      return (
-        <div className="space-y-12">
-          <FileUploadDropzone
-            onFileSelect={handleFileSelect}
-            isLoading={step !== "idle"}
-          />
-          <EmailAutomationArchitectureCard />
-        </div>
-      );
-    }
-
-    // 2. Middle State: Review & Edit
-    if (parsedInvoice && !processedInvoice) {
-      return (
-        <div className="space-y-10 animate-fade-in">
-          <div className="flex items-center justify-between">
-            <Button
-              variant="ghost"
-              onClick={reset}
-              className="font-bold text-muted-foreground hover:text-foreground"
-            >
-              <ChevronLeft className="w-4 h-4 mr-2" />
-              CANCEL
-            </Button>
-            <div className="flex items-center space-x-2">
-              <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-              <span className="text-xs font-black uppercase tracking-widest text-primary">
-                Live Review Session
-              </span>
-            </div>
-          </div>
-
-          <InvoiceHeaderCard invoice={parsedInvoice} />
-
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <div className="lg:col-span-2 space-y-8">
-              <LineItemsEditor
-                items={parsedInvoice.lineItems}
-                onChange={(items) =>
-                  setParsedInvoice({ ...parsedInvoice, lineItems: items })
-                }
-              />
-              <InvoicePartyDetails invoice={parsedInvoice} />
-              <ExtractedTextViewer rawText={parsedInvoice.extractedRawText} />
-            </div>
-
-            <div className="space-y-8">
-              <PurchaseOrderReplacementCard
-                detected={parsedInvoice.poPlaceholderDetected}
-                matchedText={parsedInvoice.poOriginalText}
-                poNumber={poNumber}
-                onPOChange={setPoNumber}
-              />
-
-              <Button
-                onClick={handleProcess}
-                className="w-full h-20 rounded-3xl font-black text-xl tracking-tighter bg-primary hover:bg-primary/90 shadow-2xl shadow-primary/20 group"
-              >
-                APPLY MARKUP
-                <ArrowRight className="w-6 h-6 ml-3 group-hover:translate-x-1 transition-transform" />
-              </Button>
-
-              <div className="glass-card p-6 rounded-2xl flex items-start space-x-3 opacity-60">
-                <Sparkles className="w-5 h-5 text-accent shrink-0" />
-                <p className="text-[10px] leading-relaxed font-bold uppercase tracking-wider text-muted-foreground">
-                  Our system extracted {parsedInvoice.lineItems.length} line
-                  items with
-                  {parsedInvoice.lowConfidence
-                    ? " low-confidence "
-                    : " high-confidence "}
-                  accuracy. Please verify values before proceeding.
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    // 3. Final State: Comparison & Final Step
-    if (processedInvoice) {
-      return (
-        <div className="space-y-8">
-          <Button
-            variant="ghost"
-            onClick={() => setProcessedInvoice(null)}
-            className="font-bold text-muted-foreground"
-          >
-            <ChevronLeft className="w-4 h-4 mr-2" />
-            BACK TO EDITOR
-          </Button>
-          <InvoicePreviewCard
-            processed={processedInvoice}
-            onDownload={handleDownload}
-            isDownloading={step === "generating"}
-            logoDataUrl={logoDataUrl}
-          />
-        </div>
-      );
-    }
-
-    return <EmptyState />;
+  const reset = () => {
+    if (resultUrl) window.URL.revokeObjectURL(resultUrl);
+    setStep("idle");
+    setError(null);
+    setFile(null);
+    setPoNumber("");
+    setResultUrl(null);
   };
 
   return (
     <div className="min-h-screen bg-background text-foreground selection:bg-primary selection:text-primary-foreground">
-      {/* Dynamic Grid Background */}
+      {/* Grid Background */}
       <div className="fixed inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:100px_100px] pointer-events-none" />
       <div className="fixed inset-0 bg-gradient-to-tr from-primary/5 via-background to-accent/5 pointer-events-none" />
 
-      <main className="relative z-10 container max-w-6xl mx-auto px-6 py-12 md:py-20 lg:py-24">
-        {/* Page Header */}
+      <main className="relative z-10 container max-w-2xl mx-auto px-6 py-12 md:py-20 lg:py-24">
+        {/* Header */}
         <header className="mb-16 text-center space-y-4">
           <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[10px] font-black uppercase tracking-[0.2em] animate-fade-in">
             <Sparkles className="w-3 h-3" />
             <span>Industrial Grade Processing</span>
           </div>
-          <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-[0.9] lg:max-w-3xl mx-auto">
+          <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-[0.9]">
             Invoice <span className="gradient-text">Automation</span> Console
           </h1>
           <p className="text-muted-foreground text-sm font-medium tracking-tight max-w-sm mx-auto opacity-70">
-            Secure, stateless document transformation with real-time markup and
-            PO resolution.
+            Upload an invoice PDF, enter a PO number, and download the processed
+            result.
           </p>
         </header>
 
-        <ProcessingStatusBanner currentStep={step} error={error} />
+        {/* Main Card */}
+        <div className="glass-card rounded-3xl p-8 md:p-10 space-y-8 shadow-2xl border border-border/40 backdrop-blur-xl">
+          {/* Success State */}
+          {step === "done" && (
+            <div className="text-center space-y-6 py-8 animate-fade-in">
+              <div className="mx-auto w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                <CheckCircle2 className="w-8 h-8 text-emerald-500" />
+              </div>
+              <div>
+                <h2 className="text-2xl font-black tracking-tight mb-2">
+                  Processing Complete
+                </h2>
+                <p className="text-muted-foreground text-sm">
+                  Your invoice has been processed with 1% markup
+                  {poNumber.trim() ? ` and PO# ${poNumber.trim()}` : ""}{" "}
+                  applied.
+                </p>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <Button
+                  onClick={handleDownload}
+                  className="h-14 px-8 rounded-2xl font-black text-base tracking-tight bg-emerald-600 hover:bg-emerald-700 shadow-lg shadow-emerald-600/20 group"
+                >
+                  <Download className="w-5 h-5 mr-2 group-hover:translate-y-0.5 transition-transform" />
+                  Download PDF
+                </Button>
+                <Button
+                  onClick={reset}
+                  variant="outline"
+                  className="h-14 px-8 rounded-2xl font-bold text-sm tracking-tight"
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Process Another
+                </Button>
+              </div>
+            </div>
+          )}
 
-        <div className="mt-8">{renderContent()}</div>
+          {/* Error State */}
+          {step === "error" && (
+            <div className="text-center space-y-4 py-4 animate-fade-in">
+              <div className="mx-auto w-14 h-14 rounded-full bg-red-500/10 flex items-center justify-center">
+                <AlertCircle className="w-7 h-7 text-red-500" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-red-400 mb-1">
+                  Processing Failed
+                </h3>
+                <p className="text-muted-foreground text-sm max-w-md mx-auto">
+                  {error}
+                </p>
+              </div>
+              <Button
+                onClick={reset}
+                variant="outline"
+                className="h-12 px-6 rounded-xl font-bold text-sm"
+              >
+                <RotateCcw className="w-4 h-4 mr-2" />
+                Try Again
+              </Button>
+            </div>
+          )}
+
+          {/* Form State */}
+          {(step === "idle" || step === "processing") && (
+            <>
+              {/* File Upload */}
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-3">
+                  Invoice PDF
+                </label>
+                <div
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  className={`relative border-2 border-dashed rounded-2xl p-8 text-center transition-all cursor-pointer group
+                    ${
+                      isDragging
+                        ? "border-primary bg-primary/5 scale-[1.01]"
+                        : file
+                          ? "border-emerald-500/40 bg-emerald-500/5"
+                          : "border-border/50 hover:border-primary/40 hover:bg-primary/5"
+                    }`}
+                >
+                  <input
+                    type="file"
+                    accept=".pdf,application/pdf"
+                    onChange={handleFileChange}
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                    disabled={step === "processing"}
+                    id="pdf-upload"
+                  />
+                  {file ? (
+                    <div className="flex items-center justify-center space-x-3">
+                      <FileText className="w-6 h-6 text-emerald-500" />
+                      <span className="font-bold text-sm">{file.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        ({(file.size / 1024).toFixed(0)} KB)
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <Upload className="w-8 h-8 mx-auto text-muted-foreground group-hover:text-primary transition-colors" />
+                      <p className="text-sm font-bold text-muted-foreground">
+                        Drop your invoice PDF here or{" "}
+                        <span className="text-primary">browse</span>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* PO Number Input */}
+              <div>
+                <label
+                  htmlFor="po-number"
+                  className="block text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-3"
+                >
+                  PO Number <span className="opacity-50">(optional)</span>
+                </label>
+                <input
+                  id="po-number"
+                  type="text"
+                  value={poNumber}
+                  onChange={(e) => setPoNumber(e.target.value)}
+                  placeholder="e.g. 91737459936384"
+                  disabled={step === "processing"}
+                  className="w-full h-14 px-5 rounded-2xl bg-background border border-border/50 text-foreground font-mono text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all disabled:opacity-50"
+                />
+              </div>
+
+              {/* Inline Error */}
+              {error && step === "idle" && (
+                <div className="flex items-center space-x-2 text-red-400 text-sm">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              {/* Submit Button */}
+              <Button
+                onClick={handleSubmit}
+                disabled={!file || step === "processing"}
+                className="w-full h-16 rounded-2xl font-black text-lg tracking-tight bg-primary hover:bg-primary/90 shadow-2xl shadow-primary/20 group disabled:opacity-40 disabled:shadow-none transition-all"
+              >
+                {step === "processing" ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-3 animate-spin" />
+                    Processing Invoice…
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-5 h-5 mr-3 group-hover:rotate-12 transition-transform" />
+                    Process Invoice
+                  </>
+                )}
+              </Button>
+
+              {/* Info Note */}
+              <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/40 text-center leading-relaxed">
+                All amounts will be adjusted with 1% markup
+                {poNumber.trim()
+                  ? ` • PO# ${poNumber.trim()} will replace existing PO`
+                  : ""}
+                &nbsp;• Original layout preserved
+              </p>
+            </>
+          )}
+        </div>
       </main>
 
-      {/* Persistent Meta Footer */}
+      {/* Footer */}
       <footer className="relative z-10 container border-t border-border/30 pb-12 pt-8 text-center">
         <div className="flex flex-col md:flex-row items-center justify-center gap-6 text-[10px] font-bold text-muted-foreground uppercase tracking-[0.3em] opacity-40">
-          <span>STATLESS-ENGINE-V1.6.0</span>
+          <span>OVERLAY-ENGINE-V2.0.0</span>
           <div className="hidden md:block w-1.5 h-1.5 rounded-full bg-border" />
           <span>ZERO-DATABASE-PERSISTENCE</span>
           <div className="hidden md:block w-1.5 h-1.5 rounded-full bg-border" />
-          <span>ENCRYPTED-BUFFER-ONLY</span>
+          <span>ORIGINAL-PDF-PRESERVED</span>
         </div>
       </footer>
     </div>

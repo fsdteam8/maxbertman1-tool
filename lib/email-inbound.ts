@@ -16,15 +16,14 @@ import type { InboundEmailPayload, EmailAttachment } from "@/types/email";
 
 const MAX_ATTACHMENT_BYTES = parseInt(
   process.env.MAX_ATTACHMENT_BYTES ?? String(20 * 1024 * 1024),
-  10
+  10,
 );
 
 const MAX_ATTACHMENTS = parseInt(process.env.MAX_ATTACHMENTS ?? "3", 10);
 
 const ALLOWED_SENDERS_RAW = process.env.ALLOWED_SENDERS ?? "";
 
-const ALLOWED_SENDERS: string[] = ALLOWED_SENDERS_RAW
-  .split(",")
+const ALLOWED_SENDERS: string[] = ALLOWED_SENDERS_RAW.split(",")
   .map((s) => s.trim().toLowerCase())
   .filter(Boolean);
 
@@ -55,14 +54,19 @@ export function validateInboundSender(fromAddress: string): boolean {
  */
 export function parseSendGridWebhook(
   fields: Record<string, string | string[]>,
-  attachments: { filename: string; contentType: string; content: Buffer }[]
+  attachments: { filename: string; contentType: string; content: Buffer }[],
 ): InboundEmailPayload {
   const get = (k: string) =>
-    Array.isArray(fields[k]) ? fields[k][0] : fields[k] ?? "";
+    Array.isArray(fields[k]) ? fields[k][0] : (fields[k] ?? "");
 
   const attachmentCount = parseInt(get("attachments") || "0", 10);
-  if (attachmentCount > MAX_ATTACHMENTS || attachments.length > MAX_ATTACHMENTS) {
-    throw new Error(`Too many attachments (received ${Math.max(attachmentCount, attachments.length)}, max ${MAX_ATTACHMENTS}).`);
+  if (
+    attachmentCount > MAX_ATTACHMENTS ||
+    attachments.length > MAX_ATTACHMENTS
+  ) {
+    throw new Error(
+      `Too many attachments (received ${Math.max(attachmentCount, attachments.length)}, max ${MAX_ATTACHMENTS}).`,
+    );
   }
 
   return {
@@ -150,24 +154,38 @@ function extractDisplayName(raw: string): string | null {
 /*                             PO NUMBER EXTRACTION                           */
 /* -------------------------------------------------------------------------- */
 
+/** Regex patterns for PO extraction, ordered by specificity */
+const PO_EXTRACT_PATTERNS: RegExp[] = [
+  /change\s+PO\s*#?\s*to\s+([A-Za-z0-9\-\/\.]+)/i,
+  /PO\s*#\s*:?\s*([A-Za-z0-9\-\/\.]+)/i,
+  /PO\s+Number\s*:?\s*([A-Za-z0-9\-\/\.]+)/i,
+  /Purchase\s*Order\s*#?\s*:?\s*([A-Za-z0-9\-\/\.]+)/i,
+  /PO\s*:?\s*([A-Za-z0-9\-\/\.]{3,})/i,
+];
+
 /**
- * Extract a PO number from email subject or body.
- * Supported patterns:
+ * Extract a PO number from email subject (primary) or body (fallback).
  *
- * PO: 12345
- * PO# 12345
- * PO Number: 12345
+ * Searches the subject line first. If no PO is found there,
+ * falls back to searching the body text.
  */
 export function extractPOFromEmail(
   subject: string,
-  body: string
+  body: string,
 ): string | null {
-  const combined = `${subject}\n${body}`;
+  // Try subject first (primary source)
+  for (const pattern of PO_EXTRACT_PATTERNS) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(subject);
+    if (match?.[1]) return match[1].trim();
+  }
 
-  // More robust regex for PO extraction
-  // Handles: PO: 12345, PO# 12345, PO Number: 12345, Purchase Order: 12345, PO 12345
-  // Updated to avoid picking up arbitrary numbers by requiring a PO-related prefix
-  const match = /(?:PO|Purchase\s*Order)(?:#|:|Number)?[\s:]*([A-Za-z0-9\-\/\.]+)/i.exec(combined);
+  // Fallback to body
+  for (const pattern of PO_EXTRACT_PATTERNS) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(body);
+    if (match?.[1]) return match[1].trim();
+  }
 
-  return match ? match[1].trim() : null;
+  return null;
 }

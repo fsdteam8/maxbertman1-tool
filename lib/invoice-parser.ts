@@ -371,6 +371,7 @@ function findMetadata(
         height: exactItem.height,
       },
       pageIndex: exactItem.pageIndex,
+      fullText: exactItem.str,
     };
   }
 
@@ -389,6 +390,7 @@ function findMetadata(
           height: numItem.height,
         },
         pageIndex: numItem.pageIndex,
+        fullText: numItem.str,
       };
     }
   }
@@ -424,6 +426,7 @@ function findMetadata(
             height: maxH,
           },
           pageIndex: anchor.pageIndex,
+          fullText: concat,
         };
       }
     }
@@ -526,6 +529,29 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   // PO placeholder detection
   const poCheck = detectPOPlaceholder(text);
 
+  // Existing PO number extraction (Case B)
+  const poNumber = extractField(text, [
+    /\bPO\b\s*#?\s*:?\s*(?!(?:pending|awaiting)\b)(\w{5,})\b/i,
+    /\bPurchase\s*Order\b\s*#?\s*:?\s*(?!(?:pending|awaiting)\b)(\w{5,})\b/i,
+  ]);
+
+  // Identify Service Activity Items (for Case C)
+  // This focuses on items in the left-half of the page below headers
+  const serviceActivityItems = items.filter((it) => {
+    const isBelowHeader = it.y < 550; // Approximated from sample layouts
+    const isAboveFooter = it.y > 100;
+    const isLeftColumn = it.x < 300; // Left column is usually < 300
+    // Skip common static headers
+    const isNotHeader = !/Invoice|Customer|Date|Activity/i.test(it.str);
+    return isBelowHeader && isAboveFooter && isLeftColumn && isNotHeader;
+  });
+
+  const serviceActivityMetadata = serviceActivityItems.map((it) => ({
+    rect: { x: it.x, y: it.y, width: it.width, height: it.height },
+    pageIndex: it.pageIndex,
+    fullText: it.str,
+  }));
+
   // Line items
   const lineItems = extractLineItems(text);
 
@@ -565,6 +591,7 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
     totalAmount,
     poPlaceholderDetected: poCheck.detected,
     poOriginalText: poCheck.matchedText,
+    poNumber,
     sourceMetadata: {
       invoiceNumber: findMetadata(invoiceNumber, items),
       invoiceDate: findMetadata(invoiceDate, items),
@@ -600,9 +627,11 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
         items,
       ),
       poPlaceholder: findMetadata(poCheck.matchedText, items),
+      poNumber: findMetadata(poNumber, items),
       serviceAddress:
         findMetadata("Service Address", items) ||
         findMetadata("SERVICE ADDRESS", items),
+      serviceActivityItems: serviceActivityMetadata,
     },
     extractedRawText: text,
     lowConfidence,

@@ -1,84 +1,76 @@
 import { NextRequest, NextResponse } from "next/server";
-import { generateInvoicePDF } from "@/lib/invoice-generator";
-import {
-  validateInvoiceDataStrict,
-  logValidationWarnings,
-} from "@/lib/invoice-validator";
+import { generateOverlaidPDF } from "@/lib/pdf-overlay";
+import { extractTextFromPDF, parseInvoiceText } from "@/lib/invoice-parser";
+import { normalizeInvoice } from "@/lib/invoice-normalizer";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/invoice/generate
  *
- * Accepts either:
- *  - multipart/form-data with 'invoice' (JSON string)
- *  - application/json with the invoice object directly (legacy)
+ * Accepts multipart/form-data with:
+ *   - invoice: JSON string of the marked-up ParsedInvoice
+ *   - originalPdf: the original PDF file (required for overlay)
  *
- * Validates invoice data before generation to ensure:
- * - No hardcoded/placeholder data is used
- * - All required fields are present
- * - Financial totals are coherent
- *
- * Generates an invoice PDF deterministically from scratch and returns it as a binary stream.
+ * Generates the overlaid PDF by comparing the original extraction
+ * with the marked-up invoice data, and returns the modified PDF.
  */
 export async function POST(req: NextRequest) {
   try {
-    let invoice: any;
-
     const contentType = req.headers.get("content-type") || "";
 
-    if (contentType.includes("multipart/form-data")) {
-      // FormData mode: invoice JSON string
-      const formData = await req.formData();
-      const invoiceField = formData.get("invoice");
-
-      if (!invoiceField) {
-        return NextResponse.json(
-          { success: false, error: "Missing invoice data" },
-          { status: 400 },
-        );
-      }
-
-      invoice = JSON.parse(invoiceField as string);
-    } else {
-      // Legacy JSON mode
-      invoice = await req.json();
+    if (!contentType.includes("multipart/form-data")) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            "This endpoint requires multipart/form-data with 'invoice' and 'originalPdf' fields.",
+        },
+        { status: 400 },
+      );
     }
 
-    if (!invoice) {
+    const formData = await req.formData();
+    const invoiceField = formData.get("invoice");
+    const originalPdfFile = formData.get("originalPdf") as File | null;
+
+    if (!invoiceField) {
       return NextResponse.json(
         { success: false, error: "Missing invoice data" },
         { status: 400 },
       );
     }
 
-    // ─── VALIDATION: Ensure no hardcoded/dummy data ───
-    try {
-      validateInvoiceDataStrict(invoice);
-      logValidationWarnings(invoice);
-    } catch (validationError: any) {
-      console.error(
-        "[api/invoice/generate] Validation failed:",
-        validationError.message,
-      );
+    if (!originalPdfFile) {
       return NextResponse.json(
         {
           success: false,
-          error: `Invoice validation failed: ${validationError.message}`,
+          error:
+            "Missing originalPdf file. The overlay engine requires the original PDF.",
         },
-        { status: 422 }, // 422 Unprocessable Entity
+        { status: 400 },
       );
     }
 
-    // Generate the deterministic PDF buffer from scratch
-    const pdfBuffer = await generateInvoicePDF(invoice);
+    const markedUpInvoice = JSON.parse(invoiceField as string);
+    const originalPdfBuffer = Buffer.from(await originalPdfFile.arrayBuffer());
 
-    // Determine filename
-    const filename = invoice.invoiceNumber
-      ? `Invoice_${invoice.invoiceNumber}_Processed.pdf`
+    // Re-parse the original PDF to get fresh coordinate metadata
+    const extractedContent = await extractTextFromPDF(originalPdfBuffer);
+    const parsed = parseInvoiceText(extractedContent);
+    const originalInvoice = normalizeInvoice(parsed);
+
+    // Generate overlaid PDF
+    const pdfBuffer = await generateOverlaidPDF(
+      originalPdfBuffer,
+      originalInvoice,
+      markedUpInvoice,
+    );
+
+    const filename = markedUpInvoice.invoiceNumber
+      ? `Invoice_${markedUpInvoice.invoiceNumber}_Processed.pdf`
       : "Processed_Invoice.pdf";
 
-    // Stream as PDF response
     return new NextResponse(new Uint8Array(pdfBuffer), {
       status: 200,
       headers: {

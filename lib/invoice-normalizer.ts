@@ -47,8 +47,18 @@ export function normalizeInvoice(raw: ParsedInvoice): ParsedInvoice {
         ? Math.round(raw.creditAmount * 100) / 100
         : null,
     totalAmount:
-      raw.totalAmount !== null ? Math.round(raw.totalAmount * 100) / 100 : null,
+      raw.totalAmount !== null
+        ? Math.round(raw.totalAmount * 100) / 100
+        : raw.balanceDue !== null
+          ? Math.round(raw.balanceDue * 100) / 100
+          : null,
+    poNumber: raw.poNumber?.trim() || null,
   };
+
+  // Ensure balanceDue is also populated from totalAmount if missing
+  if (normalized.balanceDue === null && normalized.totalAmount !== null) {
+    normalized.balanceDue = normalized.totalAmount;
+  }
 
   // VALIDATION: Check totals coherence from line items
   const services =

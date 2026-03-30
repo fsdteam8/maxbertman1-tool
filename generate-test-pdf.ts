@@ -8,7 +8,9 @@
  * Usage: npx tsx generate-test-pdf.ts
  */
 
-import { generateInvoicePDF } from "./lib/invoice-generator";
+// NOTE: The old generateInvoicePDF (from-scratch via @react-pdf/renderer) has been
+// replaced with the overlay engine. This test script is deprecated.
+// Use scripts/test-overlay.ts instead for testing the overlay approach.
 import type { ParsedInvoice } from "./types/invoice";
 import fs from "fs";
 
@@ -183,24 +185,12 @@ const invoiceLongText: ParsedInvoice = {
   ],
 } as ParsedInvoice;
 
+import { applyMarkupToInvoice } from "./lib/invoice-transformer";
+
 // ═══════════════════════════════════════════════════════════════════════════
-// Generate all test PDFs
+// Generate all test PDFs — DEPRECATED (uses old from-scratch generator)
+// Use scripts/test-overlay.ts instead.
 // ═══════════════════════════════════════════════════════════════════════════
-async function run() {
-  const tests = [
-    { name: "test-48572-multiline.pdf", invoice: invoice48572 },
-    { name: "test-48166-credit.pdf", invoice: invoice48166 },
-    { name: "test-48289-tax.pdf", invoice: invoice48289 },
-    { name: "test-overflow.pdf", invoice: invoiceLongText },
-  ];
-
-  for (const { name, invoice } of tests) {
-    const pdfBytes = await generateInvoicePDF(invoice);
-    fs.writeFileSync(name, pdfBytes);
-    console.log(`✅ Generated ${name} (${pdfBytes.length} bytes)`);
-  }
-
-  console.log("\nDone. Compare generated PDFs against originals.");
-}
-
-run().catch(console.error);
+// async function run() { ... }
+// run().catch(console.error);
+console.log("This script is deprecated. Use: npx tsx scripts/test-overlay.ts");

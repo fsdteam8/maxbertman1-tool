@@ -12,6 +12,8 @@ export interface PDFRect {
 export interface PDFFieldMetadata {
   rect: PDFRect;
   pageIndex: number;
+  /** The full text content of the PDF item(s) found at this location */
+  fullText?: string;
 }
 
 export interface ParsedLineItem {
@@ -71,6 +73,7 @@ export interface ParsedInvoice {
   // PO handling
   poPlaceholderDetected: boolean;
   poOriginalText: string | null;
+  poNumber: string | null;
 
   // Source coordinate metadata for overlay
   sourceMetadata: {
@@ -83,7 +86,10 @@ export interface ParsedInvoice {
     creditAmount?: PDFFieldMetadata;
     totalAmount?: PDFFieldMetadata;
     poPlaceholder?: PDFFieldMetadata;
+    poNumber?: PDFFieldMetadata;
     serviceAddress?: PDFFieldMetadata;
+    /** All items identified within the Service Activity section */
+    serviceActivityItems?: PDFFieldMetadata[];
   };
 
   // Raw text for fallback / manual review
