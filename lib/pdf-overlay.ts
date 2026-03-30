@@ -229,7 +229,7 @@ export function buildOverlayOps(
     } else if (original.sourceMetadata.serviceActivityItems?.length) {
       const items = original.sourceMetadata.serviceActivityItems;
       const lastItem = items.reduce((prev, curr) =>
-        curr.y < prev.y ? curr : prev,
+        curr.rect.y < prev.rect.y ? curr : prev,
       );
       const fontSize = Math.max(lastItem.rect.height * 0.9, 8);
       ops.push({
