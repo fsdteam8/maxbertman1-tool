@@ -531,8 +531,8 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
 
   // Existing PO number extraction (Case B)
   const poNumber = extractField(text, [
-    /\bPO\b\s*#?\s*:?\s*(?!(?:pending|awaiting)\b)(\w{5,})\b/i,
-    /\bPurchase\s*Order\b\s*#?\s*:?\s*(?!(?:pending|awaiting)\b)(\w{5,})\b/i,
+    /\bPO\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba)\b)([A-Za-z0-9\-\/\.]+)/i,
+    /\bPurchase\s*Order\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba)\b)([A-Za-z0-9\-\/\.]+)/i,
   ]);
 
   // Identify Service Activity Items (for Case C)

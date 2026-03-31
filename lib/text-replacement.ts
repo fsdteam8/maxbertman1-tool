@@ -10,21 +10,25 @@
  */
 
 /** List of regex patterns that identify PO placeholders in invoice text */
-const PO_PLACEHOLDER_PATTERNS: RegExp[] = [
-  /PO#?\s*pending\s+valid\s+purchase\s+order[^.]*\.?/gi,
-  /pending\s+valid\s+purchase\s+order[^.]*\.?/gi,
+export const PO_PLACEHOLDER_PATTERNS: RegExp[] = [
+  /(PO#?\s*)(pending\s+valid\s+purchase\s+order[^.]*\.?)/gi,
+  /(pending\s+valid\s+purchase\s+order[^.]*\.?)/gi,
   /pending\s+purchase\s+order/gi,
   /purchase\s+order\s+pending/gi,
-  /PO#?\s*TBD/gi,
+  /(PO#?\s*)(TBD)/gi,
   /TBD\s*(?:[-–]|for)?\s*(?:purchase\s+)?order/gi,
-  /PO#?\s*pending/gi,
+  /(PO#?\s*)(pending)/gi,
   /pending\s+(?:PO|purchase\s+order)/gi,
   /awaiting\s+PO/gi,
   /awaiting\s+purchase\s+order/gi,
-  /PO#?\s*(?:awaiting|TBA|to\s+be\s+assigned)/gi,
-  /PO#?\s*\[\s*pending\s*\]/gi,
-  /PO#?\s*\(\s*pending\s*\)/gi,
+  /(PO#?\s*)(?:awaiting|TBA|to\s+be\s+assigned)/gi,
+  /(PO#?\s*)\[\s*pending\s*\]/gi,
+  /(PO#?\s*)\(\s*pending\s*\)/gi,
+  /\bPO#?\s*pending\b/gi,
 ];
+
+/** Pattern to match an existing PO number after a prefix (labels like PO: PO# PO ) */
+export const EXISTING_PO_QUERY_PATTERN = /(PO[:#\s]*)\s*([A-Za-z0-9\-\/\.]+)/gi;
 
 export interface PODetectionResult {
   detected: boolean;
@@ -84,8 +88,15 @@ export function replaceExistingPO(
 ): string {
   // Escape special regex chars in PO numbers
   const escaped = oldPoNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(`PO#?\\s*${escaped}(?![\\w-])`, "gi");
-  return text.replace(pattern, `PO# ${newPoNumber}`);
+  // Updated pattern: handle alphanumeric PO numbers with common separators
+  // Updated pattern: handle alphanumeric PO numbers with common separators (including :)
+  const pattern = new RegExp(`PO[:#]?\\s*${escaped}(?![\\w-])`, "gi");
+  return text.replace(pattern, (match) => {
+    // Determine the label part to preserve it if possible
+    const labelMatch = /^(PO[:#]?\s*)/i.exec(match);
+    const label = labelMatch ? labelMatch[1] : "PO# ";
+    return `${label}${newPoNumber}`;
+  });
 }
 
 /**

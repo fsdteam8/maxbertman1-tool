@@ -8,6 +8,10 @@
  */
 
 import { PDFDocument, StandardFonts, rgb, PDFPage, PDFFont } from "pdf-lib";
+import {
+  PO_PLACEHOLDER_PATTERNS,
+  EXISTING_PO_QUERY_PATTERN,
+} from "@/lib/text-replacement";
 import type {
   ParsedInvoice,
   PDFFieldMetadata,
@@ -56,14 +60,22 @@ function calculateSubstringRect(
   meta: PDFFieldMetadata,
   substring: string,
   font: PDFFont,
+  occurrenceIndex?: number,
 ): { x: number; width: number } {
   const fullText = meta.fullText || "";
-  if (!fullText || !fullText.includes(substring)) {
+  if (!fullText) {
     return { x: meta.rect.x, width: meta.rect.width };
   }
 
+  const index =
+    occurrenceIndex !== undefined
+      ? occurrenceIndex
+      : fullText.indexOf(substring);
+
+  if (index === -1) {
+    return { x: meta.rect.x, width: meta.rect.width };
+  }
   const fontSize = Math.max(meta.rect.height * 0.9, 7);
-  const index = fullText.indexOf(substring);
   const textBefore = fullText.slice(0, index);
 
   // Measure the width of the text before the target substring to find the X offset
@@ -90,6 +102,7 @@ function makeOp(
   align: "left" | "right" = "right",
   isErase: boolean = true,
   substringOnly: boolean = false,
+  offsetWithinFullText?: number,
 ): OverlayOp | null {
   if (!meta) return null;
 
@@ -97,7 +110,12 @@ function makeOp(
   let { x, width } = meta.rect;
 
   if (substringOnly && oldValue) {
-    const sub = calculateSubstringRect(meta, oldValue, font);
+    const sub = calculateSubstringRect(
+      meta,
+      oldValue,
+      font,
+      offsetWithinFullText,
+    );
     x = sub.x;
     width = sub.width;
   }
@@ -196,40 +214,81 @@ export function buildOverlayOps(
     }
   }
 
-  // ─── PO Replacement Logic ───
+  // ─── PO Replacement Logic (Column Repainting) ───
   const targetPo = markedUp.poNumber;
-  if (targetPo) {
-    if (
-      original.poPlaceholderDetected &&
-      original.sourceMetadata.poPlaceholder
-    ) {
-      const op = makeOp(
-        original.sourceMetadata.poPlaceholder,
-        original.poOriginalText || "",
-        `PO# ${targetPo}`,
-        "Case A",
-        font,
-        "left",
-        true,
-        true,
-      );
-      if (op) ops.push(op);
-    } else if (original.poNumber && original.sourceMetadata.poNumber) {
-      const op = makeOp(
-        original.sourceMetadata.poNumber,
-        original.poNumber,
-        targetPo,
-        "Case B",
-        font,
-        "left",
-        true,
-        true,
-      );
-      if (op) ops.push(op);
-    } else if (original.sourceMetadata.serviceActivityItems?.length) {
-      const items = original.sourceMetadata.serviceActivityItems;
-      const lastItem = items.reduce((prev, curr) =>
-        curr.rect.y < prev.rect.y ? curr : prev,
+
+  if (targetPo && original.sourceMetadata.serviceActivityItems?.length) {
+    let poMatchApplied = false;
+    const items = original.sourceMetadata.serviceActivityItems;
+
+    for (const item of items) {
+      const text = item.fullText || "";
+      let matched = false;
+
+      // Case A: Pending PO / Placeholder
+      for (const pattern of PO_PLACEHOLDER_PATTERNS) {
+        pattern.lastIndex = 0;
+        const match = pattern.exec(text);
+        if (match) {
+          // If we have capturing groups, match[1] is label, match[2] is placeholder
+          const isGrouped = match.length > 2 && match[1] !== undefined;
+          const placeholderPart = isGrouped ? match[2] : match[0];
+          const matchOffset = isGrouped
+            ? match.index + match[1].length
+            : match.index;
+
+          const op = makeOp(
+            item,
+            placeholderPart,
+            targetPo,
+            "Case A (Column)",
+            font,
+            "left",
+            true,
+            true,
+            matchOffset,
+          );
+          if (op) {
+            ops.push(op);
+            matched = true;
+            poMatchApplied = true;
+          }
+        }
+      }
+
+      // Case B: Existing PO (if not already matched as placeholder)
+      if (!matched) {
+        EXISTING_PO_QUERY_PATTERN.lastIndex = 0;
+        const match = EXISTING_PO_QUERY_PATTERN.exec(text);
+        if (match) {
+          const labelPart = match[1];
+          const digitsPart = match[2];
+          const matchOffset = match.index + labelPart.length;
+
+          const op = makeOp(
+            item,
+            digitsPart,
+            targetPo,
+            "Case B (Column)",
+            font,
+            "left",
+            true,
+            true,
+            matchOffset,
+          );
+          if (op) {
+            ops.push(op);
+            poMatchApplied = true;
+          }
+        }
+      }
+    }
+
+    // Case C: No PO exists anywhere in the column -> Append at the bottom
+    if (!poMatchApplied) {
+      const lastItem = items.reduce(
+        (prev: PDFFieldMetadata, curr: PDFFieldMetadata) =>
+          curr.rect.y < prev.rect.y ? curr : prev,
       );
       const fontSize = Math.max(lastItem.rect.height * 0.9, 8);
       ops.push({
