@@ -53,6 +53,7 @@ export function normalizeInvoice(raw: ParsedInvoice): ParsedInvoice {
           ? Math.round(raw.balanceDue * 100) / 100
           : null,
     poNumber: raw.poNumber?.trim() || null,
+    woNumber: raw.woNumber?.trim() || null,
   };
 
   // Ensure balanceDue is also populated from totalAmount if missing

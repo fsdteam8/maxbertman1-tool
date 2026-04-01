@@ -23,6 +23,7 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
     const poNumber = (formData.get("poNumber") as string) || undefined;
+    const woNumber = (formData.get("woNumber") as string) || undefined;
 
     if (!file) {
       return NextResponse.json(
@@ -51,8 +52,8 @@ export async function POST(req: NextRequest) {
     const parsed = parseInvoiceText(extractedContent);
     const normalized = normalizeInvoice(parsed);
 
-    // 4. Apply business rules (1% markup + PO replacement)
-    const processed = buildProcessedInvoice(normalized, poNumber);
+    // 4. Apply business rules (1% markup + PO/WO replacement)
+    const processed = buildProcessedInvoice(normalized, poNumber, woNumber);
 
     // 5. Generate overlay PDF
     const overlaidPdf = await generateOverlaidPDF(
@@ -74,10 +75,12 @@ export async function POST(req: NextRequest) {
         "Content-Length": overlaidPdf.length.toString(),
       },
     });
-  } catch (error: any) {
+  } catch (error) {
+    const errorDetail =
+      error instanceof Error ? error.message : "Failed to process invoice";
     console.error("[api/invoice/process-pdf] Error:", error);
     return NextResponse.json(
-      { success: false, error: error.message || "Failed to process invoice" },
+      { success: false, error: errorDetail },
       { status: 500 },
     );
   }

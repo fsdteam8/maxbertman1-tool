@@ -39,6 +39,8 @@ export interface OverlayOp {
   isErase: boolean;
   /** Alignment: monetary values are usually right-aligned, POs etc are left-aligned */
   align: "left" | "right";
+  /** Font weight to use */
+  weight?: "normal" | "bold";
 }
 
 // ─────────────────────────────────────────────
@@ -214,94 +216,219 @@ export function buildOverlayOps(
     }
   }
 
-  // ─── PO Replacement Logic (Column Repainting) ───
+  // ─── Dynamic Line-Replacement Logic (W.O. and Order/PO) ───
   const targetPo = markedUp.poNumber;
+  const targetWo = markedUp.woNumber;
 
-  if (targetPo && original.sourceMetadata.serviceActivityItems?.length) {
-    let poMatchApplied = false;
+  if (
+    (targetPo || targetWo) &&
+    original.sourceMetadata.serviceActivityItems?.length
+  ) {
     const items = original.sourceMetadata.serviceActivityItems;
 
+    // 1. Group items into contiguous horizontal lines based on Y coordinate
+    const Y_TOLERANCE = 3;
+    const linesMap = new Map<number, PDFFieldMetadata[]>();
     for (const item of items) {
-      const text = item.fullText || "";
-      let matched = false;
-
-      // Case A: Pending PO / Placeholder
-      for (const pattern of PO_PLACEHOLDER_PATTERNS) {
-        pattern.lastIndex = 0;
-        const match = pattern.exec(text);
-        if (match) {
-          // If we have capturing groups, match[1] is label, match[2] is placeholder
-          const isGrouped = match.length > 2 && match[1] !== undefined;
-          const placeholderPart = isGrouped ? match[2] : match[0];
-          const matchOffset = isGrouped
-            ? match.index + match[1].length
-            : match.index;
-
-          const op = makeOp(
-            item,
-            placeholderPart,
-            targetPo,
-            "Case A (Column)",
-            font,
-            "left",
-            true,
-            true,
-            matchOffset,
-          );
-          if (op) {
-            ops.push(op);
-            matched = true;
-            poMatchApplied = true;
-          }
-        }
+      let foundY = Array.from(linesMap.keys()).find(
+        (y) => Math.abs(y - item.rect.y) <= Y_TOLERANCE,
+      );
+      if (foundY === undefined) {
+        foundY = item.rect.y;
+        linesMap.set(foundY, []);
       }
+      linesMap.get(foundY)!.push(item);
+    }
 
-      // Case B: Existing PO (if not already matched as placeholder)
-      if (!matched) {
-        EXISTING_PO_QUERY_PATTERN.lastIndex = 0;
-        const match = EXISTING_PO_QUERY_PATTERN.exec(text);
-        if (match) {
-          const labelPart = match[1];
-          const digitsPart = match[2];
-          const matchOffset = match.index + labelPart.length;
+    // Sort array of lines from top to bottom
+    const sortedY = Array.from(linesMap.keys()).sort((a, b) => b - a);
+    const descLines = sortedY.map((y) => {
+      const lineItems = linesMap.get(y)!.sort((a, b) => a.rect.x - b.rect.x);
+      return {
+        y,
+        items: lineItems,
+        text: lineItems.map((i) => i.fullText || "").join(" "),
+      };
+    });
 
-          const op = makeOp(
-            item,
-            digitsPart,
-            targetPo,
-            "Case B (Column)",
-            font,
-            "left",
-            true,
-            true,
-            matchOffset,
-          );
-          if (op) {
-            ops.push(op);
-            poMatchApplied = true;
+    // Strategy 1: W.O. #
+    if (targetWo) {
+      const woLineIndex = descLines.findIndex((line) =>
+        /W\.?O\.?\s*#?/i.test(line.text),
+      );
+      if (woLineIndex !== -1) {
+        const woLine = descLines[woLineIndex];
+        const targetItemIndex = woLine.items.findIndex((i) =>
+          /W\.?O\.?\s*#?/i.test(i.fullText || ""),
+        );
+
+        if (targetItemIndex !== -1) {
+          const targetItem = woLine.items[targetItemIndex];
+          const fullText = targetItem.fullText || "";
+          const match = /(W\.?O\.?\s*#?\s*)[a-zA-Z0-9\-]+/i.exec(fullText);
+
+          if (match) {
+            const textBefore = fullText.slice(0, match.index);
+            const remainderText = fullText.slice(match.index);
+
+            const substitutedRemainder = remainderText.replace(
+              /(W\.?O\.?\s*#?\s*)[a-zA-Z0-9\-]+/i,
+              `$1${targetWo}`,
+            );
+
+            const fontSize = targetItem.rect.height || 9;
+            const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
+            const measuredFullWidth = font.widthOfTextAtSize(
+              fullText,
+              fontSize,
+            );
+            const scale = targetItem.rect.width / measuredFullWidth;
+            const startX = targetItem.rect.x + xOffset * scale;
+
+            const remainingItems = woLine.items.slice(targetItemIndex);
+            const maxRightEdge = Math.max(
+              ...remainingItems.map((i) => i.rect.x + i.rect.width),
+            );
+            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 2;
+            const maxY =
+              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
+              2;
+
+            ops.push({
+              pageIndex: targetItem.pageIndex,
+              x: startX - 1,
+              y: minY,
+              width: maxRightEdge - startX + 2,
+              height: maxY - minY,
+              newText: "", // erase exactly from match to right edge
+              fontSize,
+              isErase: true,
+              align: "left",
+            });
+
+            // Build full string for the rest of the line
+            let textToDraw = substitutedRemainder;
+            for (let i = targetItemIndex + 1; i < woLine.items.length; i++) {
+              textToDraw += " " + (woLine.items[i].fullText || "");
+            }
+
+            ops.push({
+              pageIndex: targetItem.pageIndex,
+              x: startX,
+              y: targetItem.rect.y,
+              width: 0,
+              height: fontSize,
+              newText: textToDraw.trim(),
+              fontSize,
+              isErase: false,
+              align: "left",
+              weight: "normal",
+            });
           }
         }
       }
     }
 
-    // Case C: No PO exists anywhere in the column -> Append at the bottom
-    if (!poMatchApplied) {
-      const lastItem = items.reduce(
-        (prev: PDFFieldMetadata, curr: PDFFieldMetadata) =>
-          curr.rect.y < prev.rect.y ? curr : prev,
+    // Strategy 2: Order / PO #
+    if (targetPo) {
+      const poLineIndex = descLines.findIndex((line) =>
+        /order\s*#?\s*\d|PO[:#\s]*\d|pending|awaiting/i.test(line.text),
       );
-      const fontSize = Math.max(lastItem.rect.height * 0.9, 8);
-      ops.push({
-        pageIndex: lastItem.pageIndex,
-        x: lastItem.rect.x,
-        y: lastItem.rect.y - fontSize * 1.5,
-        width: 100,
-        height: fontSize,
-        newText: `PO# ${targetPo}`,
-        fontSize,
-        isErase: false,
-        align: "left",
-      });
+      if (poLineIndex !== -1) {
+        const poLine = descLines[poLineIndex];
+        const targetItemIndex = poLine.items.findIndex((i) =>
+          /order\s*#?\s*\d|PO[:#\s]*\d|pending|awaiting/i.test(
+            i.fullText || "",
+          ),
+        );
+
+        if (targetItemIndex !== -1) {
+          const targetItem = poLine.items[targetItemIndex];
+          const fullText = targetItem.fullText || "";
+
+          let match = /pending/i.exec(fullText);
+          if (!match) match = /awaiting/i.exec(fullText);
+          if (!match) match = /PO[:#\s]*[a-zA-Z0-9\-]+/i.exec(fullText);
+          if (!match) match = /order\s*#?\s*[a-zA-Z0-9\-]+/i.exec(fullText);
+
+          if (match) {
+            const textBefore = fullText.slice(0, match.index);
+            const remainderText = fullText.slice(match.index);
+
+            let substitutedRemainder = remainderText
+              .replace(/pending/i, `${targetPo}`)
+              .replace(/awaiting/i, `${targetPo}`)
+              .replace(/(PO[:#\s]*)[a-zA-Z0-9\-]+/i, `$1${targetPo}`)
+              .replace(/(order\s*#?\s*)[a-zA-Z0-9\-]+/i, `$1${targetPo}`);
+
+            const fontSize = targetItem.rect.height || 9;
+            const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
+            const measuredFullWidth = font.widthOfTextAtSize(
+              fullText,
+              fontSize,
+            );
+            const scale = targetItem.rect.width / measuredFullWidth;
+            const startX = targetItem.rect.x + xOffset * scale;
+
+            const remainingItems = poLine.items.slice(targetItemIndex);
+            const maxRightEdge = Math.max(
+              ...remainingItems.map((i) => i.rect.x + i.rect.width),
+            );
+            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 2;
+            const maxY =
+              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
+              2;
+
+            ops.push({
+              pageIndex: targetItem.pageIndex,
+              x: startX - 1,
+              y: minY,
+              width: maxRightEdge - startX + 2,
+              height: maxY - minY,
+              newText: "",
+              fontSize,
+              isErase: true,
+              align: "left",
+            });
+
+            let textToDraw = substitutedRemainder;
+            for (let i = targetItemIndex + 1; i < poLine.items.length; i++) {
+              textToDraw += " " + (poLine.items[i].fullText || "");
+            }
+
+            ops.push({
+              pageIndex: targetItem.pageIndex,
+              x: startX,
+              y: targetItem.rect.y,
+              width: 0,
+              height: fontSize,
+              newText: textToDraw,
+              fontSize,
+              isErase: false,
+              align: "left",
+              weight: "normal",
+            });
+          }
+        }
+      } else {
+        // No PO found, append at the bottom
+        const lastItem = items.reduce((prev, curr) =>
+          curr.rect.y < prev.rect.y ? curr : prev,
+        );
+        const fontSize = Math.max(lastItem.rect.height * 0.9, 8);
+        ops.push({
+          pageIndex: lastItem.pageIndex,
+          x: lastItem.rect.x,
+          y: lastItem.rect.y - fontSize * 1.5,
+          width: 100,
+          height: fontSize,
+          newText: `PO# ${targetPo}`,
+          fontSize,
+          isErase: false,
+          align: "left",
+          weight: "normal",
+        });
+      }
     }
   }
 
@@ -320,6 +447,7 @@ export async function applyOverlay(
   });
   const pages = pdfDoc.getPages();
   const fontBold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+  const fontNormal = await pdfDoc.embedFont(StandardFonts.TimesRoman);
 
   for (const op of ops) {
     const page = pages[op.pageIndex];
@@ -335,7 +463,9 @@ export async function applyOverlay(
       });
     }
 
-    const textWidth = fontBold.widthOfTextAtSize(op.newText, op.fontSize);
+    const currentFont = op.weight === "normal" ? fontNormal : fontBold;
+    const textWidth = currentFont.widthOfTextAtSize(op.newText, op.fontSize);
+
     let textX = op.x;
     if (op.align === "right") {
       textX = op.x + op.width - textWidth;
@@ -345,7 +475,7 @@ export async function applyOverlay(
       x: textX,
       y: op.y + op.height * 0.15,
       size: op.fontSize,
-      font: fontBold,
+      font: currentFont,
       color: rgb(0, 0, 0),
     });
   }

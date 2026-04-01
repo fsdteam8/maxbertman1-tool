@@ -79,10 +79,14 @@ export async function POST(req: NextRequest) {
         "Content-Length": pdfBuffer.length.toString(),
       },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("[api/invoice/generate] Error:", error);
     return NextResponse.json(
-      { success: false, error: error.message || "Failed to generate PDF" },
+      {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Failed to generate PDF",
+      },
       { status: 500 },
     );
   }

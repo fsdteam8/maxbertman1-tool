@@ -54,10 +54,14 @@ export async function POST(req: NextRequest) {
     };
 
     return NextResponse.json(result);
-  } catch (error: any) {
+  } catch (error) {
     console.error("[api/invoice/parse] Fatal error:", error);
     return NextResponse.json(
-      { success: false, error: error.message || "Failed to parse invoice" },
+      {
+        success: false,
+        error:
+          error instanceof Error ? error.message : "Failed to parse invoice",
+      },
       { status: 500 },
     );
   }

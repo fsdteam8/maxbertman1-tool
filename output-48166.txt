@@ -1,0 +1,35 @@
+Warning: UnknownErrorException: Ensure that the `standardFontDataUrl` API parameter is provided.
+Warning: UnknownErrorException: Ensure that the `standardFontDataUrl` API parameter is provided.
+Subtotal: null
+TaxAmount: null
+Rate: null
+Total: null
+
+Raw Text:
+  System4 S.N.E.
+  60 Romano Vineyard Way, #101
+North Kingstown, RI 02852
+billing@system4ips.com
+  INVOICE
+  CUSTOMER#     2758
+  BILL TO
+  INVOICE#     48166
+  The Pennfield School
+  DATE     03/01/2026
+110 Sandy Point Ave
+  DUE DATE     03/11/2026
+Portsmouth, RI 02871
+  SERVICE ACTIVITY     QTY     RATE     AMOUNT
+Services     Cleaning 03/01/2026 - 03/31/2026     3,516.00
+  SERVICE ADDRESS
+CREDIT     (     2,704.61  )
+  The Pennfield School
+110 Sandy Point Ave
+  BALANCE DUE   
+Portsmouth, RI 02871  $811.39
+  REMIT TO
+  System4 S.N.E.
+60 Romano Vineyard Way, #101
+North Kingstown, RI 02852
+Attn: billing@system4ips.com
+Phone: (401) 615-7043

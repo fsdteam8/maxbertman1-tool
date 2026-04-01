@@ -475,13 +475,15 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   ]);
 
   const subtotal = extractAmount(text, [
-    /Subtotal\s*:?\s*\$?([\d,]+\.?\d*)/i,
-    /Sub[\\s-]?Total\s*:?\s*\$?([\d,]+\.?\d*)/i,
-    /Services\s+Total\s*:?\s*\$?([\d,]+\.?\d*)/i,
+    /Subtotal.*?\s+\$?([\d,]+\.\d{2})/i,
+    /Sub[\s-]?Total.*?\s+\$?([\d,]+\.\d{2})/i,
+    /Services\s+Total.*?\s+\$?([\d,]+\.\d{2})/i,
   ]);
 
   const taxAmount = extractAmount(text, [
-    /(?:Sales\s+)?Tax\s*:?\s*\$?([\d,]+\.?\d*)/i,
+    /(?:Sales\s+)?Tax.*?(?:%|rate)[^$\d]*?\$?\s*([\d,]+\.\d{2})/i,
+    /(?:Sales\s+)?Tax[^\n\r\d]*?\$?\s*([\d,]+\.\d{2})/i,
+    /(?:Sales\s+)?Tax[\s\S]{0,40}?\$?\s*([\d,]+\.\d{2})/i,
   ]);
 
   const taxRate = extractTaxRate(text);
@@ -535,11 +537,29 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
     /\bPurchase\s*Order\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba)\b)([A-Za-z0-9\-\/\.]+)/i,
   ]);
 
-  // Identify Service Activity Items (for Case C)
-  // This focuses on items in the left-half of the page below headers
+  // Existing W.O. number extraction
+  const woNumber = extractField(text, [
+    /\bW\.?O\.?\b\s*#?\s*:?\s*([A-Za-z0-9\-\/\.]+)/i,
+    /\bWork\s*Order\b\s*#?\s*:?\s*([A-Za-z0-9\-\/\.]+)/i,
+  ]);
+
+  // Identify Service Activity Items
+  // This focuses on items in the left-half of the page between the "Services" header and following sections
+  const servicesHeaderItem = items.find(
+    (it) => /Service\s*-\s*Activity|Services?/i.test(it.str) && it.y < 700,
+  );
+  const nextSectionItem = items.find(
+    (it) =>
+      /(?:Sales\s*)?Tax|Total|Credit|Subtotal|PAGE/i.test(it.str) &&
+      it.y < (servicesHeaderItem?.y || 600),
+  );
+
+  const topY = servicesHeaderItem ? servicesHeaderItem.y - 5 : 550;
+  const bottomY = nextSectionItem ? nextSectionItem.y + 5 : 100;
+
   const serviceActivityItems = items.filter((it) => {
-    const isBelowHeader = it.y < 550; // Approximated from sample layouts
-    const isAboveFooter = it.y > 100;
+    const isBelowHeader = it.y < topY;
+    const isAboveFooter = it.y > bottomY;
     const isLeftColumn = it.x < 300; // Left column is usually < 300
     // Skip common static headers
     const isNotHeader = !/Invoice|Customer|Date|Activity/i.test(it.str);
@@ -592,6 +612,7 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
     poPlaceholderDetected: poCheck.detected,
     poOriginalText: poCheck.matchedText,
     poNumber,
+    woNumber,
     sourceMetadata: {
       invoiceNumber: findMetadata(invoiceNumber, items),
       invoiceDate: findMetadata(invoiceDate, items),

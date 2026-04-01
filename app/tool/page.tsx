@@ -20,6 +20,7 @@ export default function ToolPage() {
   const [error, setError] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [poNumber, setPoNumber] = useState("");
+  const [woNumber, setWoNumber] = useState("");
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [resultFilename, setResultFilename] = useState("Processed_Invoice.pdf");
   const [isDragging, setIsDragging] = useState(false);
@@ -80,6 +81,9 @@ export default function ToolPage() {
       if (poNumber.trim()) {
         formData.append("poNumber", poNumber.trim());
       }
+      if (woNumber.trim()) {
+        formData.append("woNumber", woNumber.trim());
+      }
 
       const res = await fetch("/api/invoice/process-pdf", {
         method: "POST",
@@ -105,8 +109,10 @@ export default function ToolPage() {
       setResultUrl(url);
       setResultFilename(fname);
       setStep("done");
-    } catch (err: any) {
-      setError(err.message || "Failed to process the invoice.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to process the invoice.",
+      );
       setStep("error");
     }
   };
@@ -127,6 +133,7 @@ export default function ToolPage() {
     setError(null);
     setFile(null);
     setPoNumber("");
+    setWoNumber("");
     setResultUrl(null);
   };
 
@@ -166,6 +173,7 @@ export default function ToolPage() {
                 </h2>
                 <p className="text-muted-foreground text-sm">
                   Your invoice has been processed with 1% markup
+                  {woNumber.trim() ? ` and W.O. # ${woNumber.trim()}` : ""}
                   {poNumber.trim() ? ` and PO# ${poNumber.trim()}` : ""}{" "}
                   applied.
                 </p>
@@ -264,13 +272,32 @@ export default function ToolPage() {
                 </div>
               </div>
 
+              {/* W.O. Number Input */}
+              <div>
+                <label
+                  htmlFor="wo-number"
+                  className="block text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-3"
+                >
+                  W.O. # <span className="opacity-50">(optional)</span>
+                </label>
+                <input
+                  id="wo-number"
+                  type="text"
+                  value={woNumber}
+                  onChange={(e) => setWoNumber(e.target.value)}
+                  placeholder="e.g. 12903"
+                  disabled={step === "processing"}
+                  className="w-full h-14 px-5 rounded-2xl bg-background border border-border/50 text-foreground font-mono text-sm placeholder:text-muted-foreground/40 focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 transition-all disabled:opacity-50"
+                />
+              </div>
+
               {/* PO Number Input */}
               <div>
                 <label
                   htmlFor="po-number"
                   className="block text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground mb-3"
                 >
-                  PO Number <span className="opacity-50">(optional)</span>
+                  Order / PO # <span className="opacity-50">(optional)</span>
                 </label>
                 <input
                   id="po-number"
@@ -313,8 +340,8 @@ export default function ToolPage() {
               {/* Info Note */}
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground/40 text-center leading-relaxed">
                 All amounts will be adjusted with 1% markup
-                {poNumber.trim()
-                  ? ` • PO# ${poNumber.trim()} will replace existing PO`
+                {poNumber.trim() || woNumber.trim()
+                  ? ` • Replacements dynamically painted over line`
                   : ""}
                 &nbsp;• Original layout preserved
               </p>

@@ -41,7 +41,6 @@ export function applyMarkupToInvoice(
   const factor = 1 + markupPercent / 100;
 
   // ─── Step 1: Mark up line items ──────────────────────────────────
-  // Key requirement: "All monetary amounts on the invoice must be silently multiplied by 1.01"
   const markedLineItems: ParsedLineItem[] = invoice.lineItems.map((item) => {
     return {
       ...item,
@@ -51,21 +50,56 @@ export function applyMarkupToInvoice(
   });
 
   // ─── Step 2: Mark up header totals ───────────────────────────────
-  // Recalculate component totals if they exist in the original
-  const subtotal =
+  // Note: we multiply extracted totals directly to maintain the "each number is multiplied" rule
+  let subtotal =
     invoice.subtotal !== null ? round2(invoice.subtotal * factor) : null;
-  const taxAmount =
+
+  // Fallback: if header subtotal is missing, sum the marked-up line items
+  if (subtotal === null) {
+    subtotal = round2(
+      markedLineItems
+        .filter((it) => it.type === "service")
+        .reduce((sum, it) => sum + (it.amount ?? 0), 0),
+    );
+  }
+
+  // If taxRate exists, we ensure taxAmount stays consistent with it
+  let taxAmount =
     invoice.taxAmount !== null ? round2(invoice.taxAmount * factor) : null;
-  const creditAmount =
+
+  if (invoice.taxRate !== null && subtotal !== null) {
+    // If we have a rate, the amount MUST match subtotal * rate
+    // This satisfies "EXCEPT the tax rate - that stays the same"
+    taxAmount = round2(subtotal * (invoice.taxRate / 100));
+  }
+
+  // Fallback: if taxAmount is missing but line items have tax, sum them
+  if (taxAmount === null) {
+    taxAmount = round2(
+      markedLineItems
+        .filter((it) => it.type === "tax")
+        .reduce((sum, it) => sum + (it.amount ?? 0), 0),
+    );
+  }
+
+  let creditAmount =
     invoice.creditAmount !== null
       ? round2(invoice.creditAmount * factor)
       : null;
 
-  // Balance due and total amount must also be multiplied by 1.01
-  const balanceDue =
-    invoice.balanceDue !== null ? round2(invoice.balanceDue * factor) : null;
-  const totalAmount =
-    invoice.totalAmount !== null ? round2(invoice.totalAmount * factor) : null;
+  // Fallback: if creditAmount is missing but line items have credit, sum them
+  if (creditAmount === null) {
+    creditAmount = round2(
+      markedLineItems
+        .filter((it) => it.type === "credit")
+        .reduce((sum, it) => sum + Math.abs(it.amount ?? 0), 0),
+    );
+  }
+
+  // Recalculate balance due and total amount to ensure internal consistency
+  // Balance = Subtotal + Tax - Credit
+  const totalAmount = round2((subtotal ?? 0) + (taxAmount ?? 0));
+  const balanceDue = round2(totalAmount - (creditAmount ?? 0));
 
   return {
     ...invoice,
@@ -74,7 +108,7 @@ export function applyMarkupToInvoice(
     taxAmount,
     creditAmount,
     totalAmount,
-    balanceDue,
+    balanceDue: balanceDue > 0 ? balanceDue : totalAmount,
   };
 }
 
@@ -123,12 +157,21 @@ export function applyPOReplacement(
 export function buildProcessedInvoice(
   original: ParsedInvoice,
   poNumber?: string,
+  woNumber?: string,
   markupPercent: number = 1,
 ): ProcessedInvoice {
   const warnings: string[] = [];
 
   // Apply markup first
   let markedUp = applyMarkupToInvoice(original, markupPercent);
+
+  // Transfer provided PO/WO parameters to markedUp directly for the GUI overlay engine
+  if (poNumber) {
+    markedUp.poNumber = poNumber;
+  }
+  if (woNumber) {
+    markedUp.woNumber = woNumber;
+  }
 
   // Apply PO replacement if a PO number was provided
   const hasPlaceholder =
@@ -168,7 +211,10 @@ export function buildProcessedInvoice(
     markedUp,
     markupPercent,
     poReplacementApplied,
-    replacementPoNumber: poReplacementApplied ? (poNumber ?? null) : null,
+    replacementPoNumber: poReplacementApplied
+      ? (poNumber ?? null)
+      : (poNumber ?? null),
+    replacementWoNumber: woNumber ?? null,
     warnings,
   };
 }

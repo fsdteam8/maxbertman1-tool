@@ -31,6 +31,8 @@ const sharedFields = {
   ],
   poPlaceholderDetected: false,
   poOriginalText: null,
+  poNumber: null,
+  woNumber: null,
   sourceMetadata: {},
   extractedRawText: "",
   lowConfidence: false,

@@ -34,7 +34,9 @@ export async function sendEmail({
     throw new Error("SENDGRID_API_KEY is not configured. Cannot send email.");
   }
 
-  console.log(`[email-outbound] Sending email to ${to} | subject: "${subject}"`);
+  console.log(
+    `[email-outbound] Sending email to ${to} | subject: "${subject}"`,
+  );
 
   const msg: sgMail.MailDataRequired = {
     to,
@@ -61,11 +63,14 @@ export async function sendEmail({
 
   try {
     const [response] = await sgMail.send(msg);
-    console.log(`[email-outbound] Email sent. Status: ${response.statusCode}, Headers: x-message-id=${response.headers?.["x-message-id"] || "n/a"}`);
-  } catch (error: any) {
-    const details = error?.response?.body?.errors
-      ? JSON.stringify(error.response.body.errors)
-      : error.message;
+    console.log(
+      `[email-outbound] Email sent. Status: ${response.statusCode}, Headers: x-message-id=${response.headers?.["x-message-id"] || "n/a"}`,
+    );
+  } catch (error) {
+    const errorAny = error as any;
+    const details = errorAny?.response?.body?.errors
+      ? JSON.stringify(errorAny.response.body.errors)
+      : errorAny?.message || String(error);
     console.error(`[email-outbound] SendGrid send failed:`, details);
     throw new Error(`Email delivery failed: ${details}`);
   }
@@ -78,7 +83,7 @@ export async function sendProcessedInvoiceEmail(
   to: string,
   invoiceNumber: string | null,
   pdfBuffer: Buffer,
-  replyToMessageId?: string
+  replyToMessageId?: string,
 ): Promise<void> {
   const subject = invoiceNumber
     ? `Processed Invoice #${invoiceNumber}`
@@ -113,7 +118,7 @@ export async function sendProcessedInvoiceEmail(
 export async function sendFailureEmail(
   to: string,
   error: string,
-  replyToMessageId?: string
+  replyToMessageId?: string,
 ): Promise<void> {
   await sendEmail({
     to,

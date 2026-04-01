@@ -24,8 +24,11 @@ export async function POST(req: NextRequest) {
         "Content-Disposition": 'attachment; filename="processed_invoice.pdf"',
       },
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error("Error processing invoice:", error);
+
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
 
     // As per Step 5: Error Handling
     // Never return a corrupted or partially written PDF — wrap in try/catch
@@ -38,7 +41,7 @@ export async function POST(req: NextRequest) {
       return new Response(new Uint8Array(arrayBuffer), {
         headers: {
           "Content-Type": "application/pdf",
-          "X-Processing-Error": error.message || "Unknown error",
+          "X-Processing-Error": errorMessage,
           "Content-Disposition":
             'attachment; filename="original_invoice_error.pdf"',
         },

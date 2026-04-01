@@ -57,10 +57,11 @@ export async function POST(req: NextRequest) {
     let email;
     try {
       email = parseSendGridWebhook(fields as any, attachments as any);
-    } catch (err: any) {
-      trace.push(`Payload parsing failed: ${err.message}`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      trace.push(`Payload parsing failed: ${errorMessage}`);
       return NextResponse.json(
-        { success: false, error: err.message },
+        { success: false, error: errorMessage },
         { status: 400 },
       );
     }
@@ -172,15 +173,16 @@ export async function POST(req: NextRequest) {
     trace.push("Sent processed invoice reply email.");
 
     return NextResponse.json({ success: true, trace });
-  } catch (error: any) {
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Internal processing error";
     console.error("[api/email/inbound] Fatal processing error:", error);
-    trace.push(`FATAL ERROR: ${error.message}`);
+    trace.push(`FATAL ERROR: ${errorMessage}`);
 
-    const errorDetail = error instanceof Error ? error.message : String(error);
     if (senderEmail !== "unknown") {
       await sendFailureEmail(
         senderEmail,
-        `Invoice processing failed: ${errorDetail}`,
+        `Invoice processing failed: ${errorMessage}`,
         messageId,
       ).catch((e) => console.error("Failed to send failure email:", e));
     }
@@ -188,7 +190,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: error.message || "Internal processing error",
+        error: errorMessage,
         trace,
       },
       { status: 500 },

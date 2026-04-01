@@ -74,6 +74,7 @@ export interface ParsedInvoice {
   poPlaceholderDetected: boolean;
   poOriginalText: string | null;
   poNumber: string | null;
+  woNumber: string | null;
 
   // Source coordinate metadata for overlay
   sourceMetadata: {
@@ -105,7 +106,9 @@ export interface ProcessedInvoice {
   markupPercent: number;
   poReplacementApplied: boolean;
   replacementPoNumber: string | null;
+  replacementWoNumber: string | null;
   warnings: string[];
+  injectedSalesTax?: boolean;
 }
 
 // ─────────────────────────────────────────────

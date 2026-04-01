@@ -55,6 +55,7 @@ const MOCK_INVOICE: ParsedInvoice = {
   poPlaceholderDetected: false,
   poOriginalText: null,
   poNumber: null,
+  woNumber: null,
   sourceMetadata: null as any,
   extractedRawText: "Mock Data",
   lowConfidence: false,
