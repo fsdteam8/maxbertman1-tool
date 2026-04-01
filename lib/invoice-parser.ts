@@ -19,6 +19,7 @@ import type {
   ParsedLineItem,
   PDFFieldMetadata,
 } from "@/types/invoice";
+import { PDFDocument } from "pdf-lib";
 import { parseCurrencyString } from "@/lib/currency";
 import { detectPOPlaceholder } from "@/lib/text-replacement";
 
@@ -38,6 +39,7 @@ export interface PDFTextItem {
 export interface ExtractedPDFContent {
   rawText: string;
   items: PDFTextItem[];
+  hasAcroForm: boolean;
 }
 
 /**
@@ -113,9 +115,21 @@ export async function extractTextFromPDF(
     pageTexts.push(reconstructedLines.join("\n"));
   }
 
+  // Check for native form fields (AcroForm)
+  let hasAcroForm = false;
+  try {
+    const pdfDoc = await PDFDocument.load(uint8, { ignoreEncryption: true });
+    const form = pdfDoc.getForm();
+    const fields = form.getFields();
+    hasAcroForm = fields.length > 0;
+  } catch (e) {
+    console.warn("[Parser] Failed to check for AcroForm fields:", e);
+  }
+
   return {
     rawText: pageTexts.join("\n\n"),
     items: allItems,
+    hasAcroForm,
   };
 }
 
@@ -436,7 +450,7 @@ function findMetadata(
 }
 
 export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
-  const { rawText: text, items } = content;
+  const { rawText: text, items, hasAcroForm } = content;
 
   // Header fields
   const invoiceNumber = extractField(text, [
@@ -656,5 +670,6 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
     },
     extractedRawText: text,
     lowConfidence,
+    hasAcroForm,
   };
 }

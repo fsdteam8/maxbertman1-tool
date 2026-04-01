@@ -98,6 +98,8 @@ export interface ParsedInvoice {
 
   /** True when extraction was partial and manual review is recommended */
   lowConfidence?: boolean;
+  /** True when the PDF contains native form fields (AcroForm) */
+  hasAcroForm?: boolean;
 }
 
 export interface ProcessedInvoice {

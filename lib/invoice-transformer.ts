@@ -159,6 +159,8 @@ export function buildProcessedInvoice(
   poNumber?: string,
   woNumber?: string,
   markupPercent: number = 1,
+  invoiceDate?: string,
+  dueDate?: string,
 ): ProcessedInvoice {
   const warnings: string[] = [];
 
@@ -171,6 +173,12 @@ export function buildProcessedInvoice(
   }
   if (woNumber) {
     markedUp.woNumber = woNumber;
+  }
+  if (invoiceDate) {
+    markedUp.invoiceDate = invoiceDate;
+  }
+  if (dueDate) {
+    markedUp.dueDate = dueDate;
   }
 
   // Apply PO replacement if a PO number was provided

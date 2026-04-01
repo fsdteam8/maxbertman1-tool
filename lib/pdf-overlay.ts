@@ -195,6 +195,36 @@ export function buildOverlayOps(
     }
   }
 
+  // ─── Header date fields ───
+  const dateFields = [
+    {
+      label: "invoiceDate",
+      orig: original.invoiceDate,
+      curr: markedUp.invoiceDate,
+      meta: original.sourceMetadata.invoiceDate,
+    },
+    {
+      label: "dueDate",
+      orig: original.dueDate,
+      curr: markedUp.dueDate,
+      meta: original.sourceMetadata.dueDate,
+    },
+  ];
+
+  for (const field of dateFields) {
+    if (field.meta && field.curr && field.orig !== field.curr) {
+      const op = makeOp(
+        field.meta,
+        field.orig || "",
+        field.curr,
+        field.label,
+        font,
+        "left",
+      );
+      if (op) ops.push(op);
+    }
+  }
+
   // ─── Line item amounts ───
   for (let i = 0; i < original.lineItems.length; i++) {
     const origItem = original.lineItems[i];
@@ -464,7 +494,19 @@ export async function applyOverlay(
     }
 
     const currentFont = op.weight === "normal" ? fontNormal : fontBold;
-    const textWidth = currentFont.widthOfTextAtSize(op.newText, op.fontSize);
+
+    // Auto-shrink font size if text is too wide for the target field
+    let fontSize = op.fontSize;
+    if (op.width > 0) {
+      const MIN_FONT_SIZE = 6;
+      let textWidth = currentFont.widthOfTextAtSize(op.newText, fontSize);
+      while (textWidth > op.width + 2 && fontSize > MIN_FONT_SIZE) {
+        fontSize -= 0.5;
+        textWidth = currentFont.widthOfTextAtSize(op.newText, fontSize);
+      }
+    }
+
+    const textWidth = currentFont.widthOfTextAtSize(op.newText, fontSize);
 
     let textX = op.x;
     if (op.align === "right") {
@@ -474,7 +516,7 @@ export async function applyOverlay(
     page.drawText(op.newText, {
       x: textX,
       y: op.y + op.height * 0.15,
-      size: op.fontSize,
+      size: fontSize,
       font: currentFont,
       color: rgb(0, 0, 0),
     });
