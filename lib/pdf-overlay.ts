@@ -417,16 +417,16 @@ export function buildOverlayOps(
             const maxRightEdge = Math.max(
               ...remainingItems.map((i) => i.rect.x + i.rect.width),
             );
-            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 2;
+            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 1;
             const maxY =
-              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) -
-              3;
+              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
+              1;
 
             ops.push({
               pageIndex: targetItem.pageIndex,
-              x: startX - 1,
+              x: startX - 2,
               y: minY,
-              width: maxRightEdge - startX + 2,
+              width: maxRightEdge - startX + 4,
               height: maxY - minY,
               newText: "",
               fontSize,
@@ -453,8 +453,46 @@ export function buildOverlayOps(
             });
           }
         }
+      } else if (descLines.length > 0) {
+        // Case C: No PO placeholder found. Append "PO# [number]" to the SECOND line if it exists,
+        // otherwise follow the first line. This ensures it's placed in a less crowded area (usually dates).
+        const lineToUse = descLines.length >= 2 ? descLines[1] : descLines[0];
+        const firstItem = lineToUse.items[0];
+        const fontSize = firstItem.rect.height || 8;
+
+        const minX = Math.min(...lineToUse.items.map((i) => i.rect.x));
+        const minY = Math.min(...lineToUse.items.map((i) => i.rect.y)) - 1;
+        const maxY =
+          Math.max(...lineToUse.items.map((i) => i.rect.y + i.rect.height)) + 1;
+
+        // 1. Erase the whole line (from minX to the right margin)
+        ops.push({
+          pageIndex: firstItem.pageIndex,
+          x: minX - 1,
+          y: minY,
+          width: 550 - minX + 2,
+          height: maxY - minY - 2,
+          newText: "",
+          fontSize,
+          isErase: true,
+          align: "left",
+        });
+
+        // 2. Draw the original line text + PO#
+        ops.push({
+          pageIndex: firstItem.pageIndex,
+          x: minX,
+          y: lineToUse.y - 2,
+          width: 0,
+          height: fontSize,
+          newText: `${lineToUse.text.trim()}  PO# ${targetPo}`,
+          fontSize,
+          isErase: false,
+          align: "left",
+          weight: "normal",
+        });
       } else {
-        // No PO found, append at the bottom
+        // Case D: Extreme fallback - no service lines found, append at absolute bottom of section
         const lastItem = items.reduce((prev, curr) =>
           curr.rect.y < prev.rect.y ? curr : prev,
         );
@@ -462,7 +500,7 @@ export function buildOverlayOps(
         ops.push({
           pageIndex: lastItem.pageIndex,
           x: lastItem.rect.x,
-          y: lastItem.rect.y - fontSize * 1.5 - 2,
+          y: lastItem.rect.y - fontSize * 1.5 - 4,
           width: 100,
           height: fontSize,
           newText: `PO# ${targetPo}`,
