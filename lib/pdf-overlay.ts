@@ -283,6 +283,9 @@ export function buildOverlayOps(
       linesMap.get(foundY)!.push(item);
     }
 
+    let woHandled = false;
+    let poHandled = false;
+
     // Sort array of lines from top to bottom
     const sortedY = Array.from(linesMap.keys()).sort((a, b) => b - a);
     const descLines = sortedY.map((y) => {
@@ -301,6 +304,7 @@ export function buildOverlayOps(
       );
       if (woLineIndex !== -1) {
         const woLine = descLines[woLineIndex];
+        woHandled = true; // Placeholder found, we will replace it
         const targetItemIndex = woLine.items.findIndex((i) =>
           /W\.?O\.?\s*#?/i.test(i.fullText || ""),
         );
@@ -358,7 +362,7 @@ export function buildOverlayOps(
             ops.push({
               pageIndex: targetItem.pageIndex,
               x: startX,
-              y: targetItem.rect.y,
+              y: targetItem.rect.y - 2,
               width: 0,
               height: fontSize,
               newText: textToDraw.trim(),
@@ -379,6 +383,7 @@ export function buildOverlayOps(
       );
       if (poLineIndex !== -1) {
         const poLine = descLines[poLineIndex];
+        poHandled = true; // Placeholder found, we will replace it
         const targetItemIndex = poLine.items.findIndex((i) =>
           /order\s*#?\s*\d|PO[:#\s]*\d|pending|awaiting/i.test(
             i.fullText || "",
@@ -453,9 +458,9 @@ export function buildOverlayOps(
             });
           }
         }
-      } else if (descLines.length > 0) {
-        // Case C: No PO placeholder found. Append "PO# [number]" to the SECOND line if it exists,
-        // otherwise follow the first line. This ensures it's placed in a less crowded area (usually dates).
+      } else if (descLines.length > 0 && (!poHandled || !woHandled)) {
+        // Case C: No PO placeholder (and/or no WO placeholder) found.
+        // Append missing values to the SECOND line.
         const lineToUse = descLines.length >= 2 ? descLines[1] : descLines[0];
         const firstItem = lineToUse.items[0];
         const fontSize = firstItem.rect.height || 8;
@@ -465,27 +470,38 @@ export function buildOverlayOps(
         const maxY =
           Math.max(...lineToUse.items.map((i) => i.rect.y + i.rect.height)) + 1;
 
-        // 1. Erase the whole line (from minX to the right margin)
+        // 1. Erase the whole line (narrower width to avoid Amount column)
+        const eraseWidth = Math.min(460 - minX, 550 - minX);
         ops.push({
           pageIndex: firstItem.pageIndex,
           x: minX - 1,
           y: minY,
-          width: 550 - minX + 2,
-          height: maxY - minY - 2,
+          width: eraseWidth + 2,
+          height: maxY - minY - 1,
           newText: "",
           fontSize,
           isErase: true,
           align: "left",
         });
 
-        // 2. Draw the original line text + PO#
+        // 2. Draw text with PO# and W.O.# if NOT already handled
+        let newLabel = lineToUse.text.trim();
+        if (!poHandled && targetPo) {
+          newLabel += `  PO# ${targetPo}`;
+          poHandled = true;
+        }
+        if (!woHandled && targetWo) {
+          newLabel += `  W.O.# ${targetWo}`;
+          woHandled = true;
+        }
+
         ops.push({
           pageIndex: firstItem.pageIndex,
           x: minX,
           y: lineToUse.y - 2,
           width: 0,
           height: fontSize,
-          newText: `${lineToUse.text.trim()}  PO# ${targetPo}`,
+          newText: newLabel,
           fontSize,
           isErase: false,
           align: "left",
