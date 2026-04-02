@@ -17,7 +17,7 @@ async function main() {
     return;
   }
 
-  console.log(`\n━━━ Analyzing PDF Items for: ${pdfName} ━━━`);
+  console.log(`\n━━━ Analyzing PDF Items for: ${pdfName} ━━━ `);
   const pdfBuffer = fs.readFileSync(pdfPath);
   const content = await extractTextFromPDF(pdfBuffer);
 

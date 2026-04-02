@@ -585,7 +585,7 @@ export function InvoiceDocument({
         {/* ── Balance Due ── */}
         <View style={s.balanceRow}>
           <Text style={s.balanceLabel}>BALANCE DUE</Text>
-          <Text style={s.balanceAmount}>{balanceDueText}</Text>
+          <Text style={s.balanceAmount}>${balanceDueText}</Text>
         </View>
 
         {/* ── Lower Section ── */}

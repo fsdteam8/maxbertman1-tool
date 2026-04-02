@@ -47,11 +47,19 @@ export interface OverlayOp {
 // Overlay Operations Builder
 // ─────────────────────────────────────────────
 
-function formatAmount(value: number): string {
-  return value.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+function formatAmount(value: number | string, prefix: string = ""): string {
+  const cleanValue =
+    typeof value === "string" ? value.replace(/[$, ]/g, "") : value;
+  const num = Number(cleanValue);
+  if (isNaN(num)) return String(value);
+
+  return (
+    prefix +
+    num.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  );
 }
 
 /**
@@ -146,9 +154,9 @@ export function buildOverlayOps(
   // ─── Monetary header fields ───
   const monetaryFields = [
     {
-      label: "balanceDue",
+      label: " ",
       orig: original.balanceDue,
-      curr: markedUp.balanceDue,
+      curr: markedUp.balanceDue !== null ? `$${markedUp.balanceDue}` : null,
       meta: original.sourceMetadata.balanceDue,
     },
     {
@@ -172,15 +180,20 @@ export function buildOverlayOps(
     {
       label: "totalAmount",
       orig: original.totalAmount,
-      curr: markedUp.totalAmount,
+      curr: markedUp.totalAmount !== null ? `$${markedUp.totalAmount}` : null,
       meta: original.sourceMetadata.totalAmount,
     },
   ];
 
   for (const field of monetaryFields) {
     if (field.orig !== null && field.curr !== null) {
-      const oldStr = formatAmount(field.orig);
-      const newStr = formatAmount(field.curr);
+      // Determine if this field should have a dollar sign prefix
+      const usePrefix = field.label === " " || field.label === "totalAmount";
+      const prefix = usePrefix ? "$" : "";
+
+      const oldStr = formatAmount(field.orig, prefix);
+      const newStr = formatAmount(field.curr, prefix);
+
       if (oldStr !== newStr) {
         const op = makeOp(
           field.meta,
@@ -391,7 +404,7 @@ export function buildOverlayOps(
               .replace(/(PO[:#\s]*)[a-zA-Z0-9\-]+/i, `$1${targetPo}`)
               .replace(/(order\s*#?\s*)[a-zA-Z0-9\-]+/i, `$1${targetPo}`);
 
-            const fontSize = targetItem.rect.height || 9;
+            const fontSize = targetItem.rect.height || 8;
             const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
             const measuredFullWidth = font.widthOfTextAtSize(
               fullText,
@@ -406,8 +419,8 @@ export function buildOverlayOps(
             );
             const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 2;
             const maxY =
-              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
-              2;
+              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) -
+              3;
 
             ops.push({
               pageIndex: targetItem.pageIndex,
@@ -429,7 +442,7 @@ export function buildOverlayOps(
             ops.push({
               pageIndex: targetItem.pageIndex,
               x: startX,
-              y: targetItem.rect.y,
+              y: targetItem.rect.y - 2,
               width: 0,
               height: fontSize,
               newText: textToDraw,
@@ -449,7 +462,7 @@ export function buildOverlayOps(
         ops.push({
           pageIndex: lastItem.pageIndex,
           x: lastItem.rect.x,
-          y: lastItem.rect.y - fontSize * 1.5,
+          y: lastItem.rect.y - fontSize * 1.5 - 2,
           width: 100,
           height: fontSize,
           newText: `PO# ${targetPo}`,

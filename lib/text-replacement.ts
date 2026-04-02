@@ -64,9 +64,14 @@ export function detectPOPlaceholder(text: string): PODetectionResult {
  */
 export function replacePOPlaceholder(text: string, poNumber: string): string {
   let result = text;
+  const isPending = poNumber.toLowerCase().includes("pending");
+
   for (const pattern of PO_PLACEHOLDER_PATTERNS) {
     pattern.lastIndex = 0;
-    result = result.replace(pattern, `PO# ${poNumber}`);
+    // If it's a pending placeholder, we use the exact text "Pending PO" per requirement
+    // otherwise we use "PO# [number]"
+    const replacement = isPending ? "Pending PO" : `PO# ${poNumber}`;
+    result = result.replace(pattern, replacement);
   }
   return result;
 }

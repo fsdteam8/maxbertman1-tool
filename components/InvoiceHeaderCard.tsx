@@ -44,7 +44,10 @@ export function InvoiceHeaderCard({ invoice }: InvoiceHeaderCardProps) {
                 {invoice.dueDate || "—"}
               </p>
               {invoice.dueDate && (
-                <Badge variant="outline" className="text-[10px] uppercase font-bold text-primary border-primary/20 bg-primary/5">
+                <Badge
+                  variant="outline"
+                  className="text-[10px] uppercase font-bold text-primary border-primary/20 bg-primary/5"
+                >
                   Action Required
                 </Badge>
               )}
@@ -57,7 +60,10 @@ export function InvoiceHeaderCard({ invoice }: InvoiceHeaderCardProps) {
               <span>Balance Due</span>
             </div>
             <p className="text-3xl font-black tracking-tighter text-primary">
-              {invoice.balanceDue !== null ? formatCurrency(invoice.balanceDue) : "—"}
+              $
+              {invoice.balanceDue !== null
+                ? formatCurrency(invoice.balanceDue)
+                : "—"}
             </p>
           </div>
         </div>
