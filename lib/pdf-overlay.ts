@@ -297,87 +297,7 @@ export function buildOverlayOps(
       };
     });
 
-    // Strategy 1: W.O. #
-    if (targetWo) {
-      const woLineIndex = descLines.findIndex((line) =>
-        /W\.?O\.?\s*#?/i.test(line.text),
-      );
-      if (woLineIndex !== -1) {
-        const woLine = descLines[woLineIndex];
-        woHandled = true; // Placeholder found, we will replace it
-        const targetItemIndex = woLine.items.findIndex((i) =>
-          /W\.?O\.?\s*#?/i.test(i.fullText || ""),
-        );
-
-        if (targetItemIndex !== -1) {
-          const targetItem = woLine.items[targetItemIndex];
-          const fullText = targetItem.fullText || "";
-          const match = /(W\.?O\.?\s*#?\s*)[a-zA-Z0-9\-]+/i.exec(fullText);
-
-          if (match) {
-            const textBefore = fullText.slice(0, match.index);
-            const remainderText = fullText.slice(match.index);
-
-            const substitutedRemainder = remainderText
-              .replace(/pending/i, targetWo)
-              .replace(/awaiting/i, targetWo)
-              .replace(/(W\.?O\.?#?\s*)[a-zA-Z0-9\-]+/i, `$1${targetWo}`);
-
-            // Reduce font size slightly (90% of original height) to avoid overlap issues
-            const fontSize = (targetItem.rect.height || 8) * 0.9;
-            const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
-            const measuredFullWidth = font.widthOfTextAtSize(
-              fullText,
-              fontSize,
-            );
-            const scale = targetItem.rect.width / measuredFullWidth;
-            const startX = targetItem.rect.x + xOffset * scale;
-
-            const remainingItems = woLine.items.slice(targetItemIndex);
-            const maxRightEdge = Math.max(
-              ...remainingItems.map((i) => i.rect.x + i.rect.width),
-            );
-            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 2;
-            const maxY =
-              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
-              2;
-
-            ops.push({
-              pageIndex: targetItem.pageIndex,
-              x: startX - 1,
-              y: minY - 2, // Aligning with the user's edit in the PO# section
-              width: maxRightEdge - startX + 2,
-              height: maxY - minY,
-              newText: "", // erase exactly from match to right edge
-              fontSize,
-              isErase: true,
-              align: "left",
-            });
-
-            // Build full string for the rest of the line
-            let textToDraw = substitutedRemainder;
-            for (let i = targetItemIndex + 1; i < woLine.items.length; i++) {
-              textToDraw += " " + (woLine.items[i].fullText || "");
-            }
-
-            ops.push({
-              pageIndex: targetItem.pageIndex,
-              x: startX,
-              y: targetItem.rect.y - 2,
-              width: 0,
-              height: fontSize,
-              newText: textToDraw.trim(),
-              fontSize,
-              isErase: false,
-              align: "left",
-              weight: "normal",
-            });
-          }
-        }
-      }
-    }
-
-    // Strategy 2: Order / PO #
+    // Strategy 1: Order / PO #
     if (targetPo) {
       const poLineIndex = descLines.findIndex((line) =>
         /order\s*#?\s*\d|PO[:#\s]*\d|pending|awaiting/i.test(line.text),
@@ -406,9 +326,6 @@ export function buildOverlayOps(
 
             let substitutedRemainder = remainderText;
             if (targetPo) {
-              // Be smart about replacement: if targetPo is already "Pending PO",
-              // and we matched "pending", just avoid double labeling if possible.
-              // However, the most robust way is to just replace the matched text.
               substitutedRemainder = remainderText
                 .replace(/pending/i, targetPo)
                 .replace(/awaiting/i, targetPo)
@@ -448,7 +365,8 @@ export function buildOverlayOps(
             });
 
             let textToDraw = substitutedRemainder;
-            if (!woHandled && targetWo) {
+            // REPOSITION: If WO is also provided, group it right after PO
+            if (targetWo) {
               textToDraw += `  W.O.# ${targetWo}`;
               woHandled = true;
             }
@@ -470,77 +388,165 @@ export function buildOverlayOps(
             });
           }
         }
-      } else if (descLines.length > 0 && (!poHandled || !woHandled)) {
-        // Case C: No PO placeholder (and/or no WO placeholder) found.
-        // Append missing values to the SECOND line.
-        const lineToUse = descLines.length >= 2 ? descLines[1] : descLines[0];
-        const firstItem = lineToUse.items[0];
-        const fontSize = firstItem.rect.height || 8;
+      }
+    }
 
-        const minX = Math.min(...lineToUse.items.map((i) => i.rect.x));
-        const minY = Math.min(...lineToUse.items.map((i) => i.rect.y)) - 1;
-        const maxY =
-          Math.max(...lineToUse.items.map((i) => i.rect.y + i.rect.height)) + 1;
+    // Strategy 2: W.O. # (Only if not already grouped with PO)
+    if (targetWo) {
+      const woLineIndex = descLines.findIndex((line) =>
+        /W\.?O\.?\s*#?/i.test(line.text),
+      );
+      if (woLineIndex !== -1) {
+        const woLine = descLines[woLineIndex];
+        const targetItemIndex = woLine.items.findIndex((i) =>
+          /W\.?O\.?\s*#?/i.test(i.fullText || ""),
+        );
 
-        // 1. Erase the whole line (narrower width to avoid Amount column)
-        const eraseWidth = Math.min(460 - minX, 550 - minX);
-        ops.push({
-          pageIndex: firstItem.pageIndex,
-          x: minX - 1,
-          y: minY,
-          width: eraseWidth + 2,
-          height: maxY - minY - 1,
-          newText: "",
-          fontSize,
-          isErase: true,
-          align: "left",
-        });
+        if (targetItemIndex !== -1) {
+          const targetItem = woLine.items[targetItemIndex];
+          const fullText = targetItem.fullText || "";
+          const match = /(W\.?O\.?#?\s*)[a-zA-Z0-9\-]+/i.exec(fullText);
 
-        // 2. Draw text with PO# and W.O.# if NOT already handled
-        let newLabel = lineToUse.text.trim();
-        if (!poHandled && targetPo) {
-          // Only append if it's not "Pending PO" (otherwise it's redundant to force an append)
-          if (!targetPo.toLowerCase().includes("pending")) {
-            newLabel += `  PO# ${targetPo}`;
-            poHandled = true;
+          if (match) {
+            const textBefore = fullText.slice(0, match.index);
+            const remainderText = fullText.slice(match.index);
+
+            const substitutedRemainder = remainderText
+              .replace(/pending/i, targetWo)
+              .replace(/awaiting/i, targetWo)
+              .replace(/(W\.?O\.?#?\s*)[a-zA-Z0-9\-]+/i, `$1${targetWo}`);
+
+            const fontSize = (targetItem.rect.height || 8) * 0.9;
+            const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
+            const measuredFullWidth = font.widthOfTextAtSize(
+              fullText,
+              fontSize,
+            );
+            const scale = targetItem.rect.width / measuredFullWidth;
+            const startX = targetItem.rect.x + xOffset * scale;
+
+            const remainingItems = woLine.items.slice(targetItemIndex);
+            const maxRightEdge = Math.max(
+              ...remainingItems.map((i) => i.rect.x + i.rect.width),
+            );
+            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 2;
+            const maxY =
+              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
+              2;
+
+            ops.push({
+              pageIndex: targetItem.pageIndex,
+              x: startX - 1,
+              y: minY - 2,
+              width: maxRightEdge - startX + 2,
+              height: maxY - minY,
+              newText: "",
+              fontSize,
+              isErase: true,
+              align: "left",
+            });
+
+            if (!woHandled) {
+              // Only draw if we didn't already group it with PO
+              let textToDraw = substitutedRemainder;
+              for (let i = targetItemIndex + 1; i < woLine.items.length; i++) {
+                textToDraw += " " + (woLine.items[i].fullText || "");
+              }
+
+              ops.push({
+                pageIndex: targetItem.pageIndex,
+                x: startX,
+                y: targetItem.rect.y - 2,
+                width: 0,
+                height: fontSize,
+                newText: textToDraw.trim(),
+                fontSize,
+                isErase: false,
+                align: "left",
+                weight: "normal",
+              });
+              woHandled = true;
+            }
           }
         }
-        if (!woHandled && targetWo) {
-          newLabel += `  W.O.# ${targetWo}`;
-          woHandled = true;
-        }
-
-        ops.push({
-          pageIndex: firstItem.pageIndex,
-          x: minX,
-          y: lineToUse.y - 2,
-          width: 0,
-          height: fontSize,
-          newText: newLabel,
-          fontSize,
-          isErase: false,
-          align: "left",
-          weight: "normal",
-        });
-      } else {
-        // Case D: Extreme fallback - no service lines found, append at absolute bottom of section
-        const lastItem = items.reduce((prev, curr) =>
-          curr.rect.y < prev.rect.y ? curr : prev,
-        );
-        const fontSize = Math.max(lastItem.rect.height * 0.9, 8);
-        ops.push({
-          pageIndex: lastItem.pageIndex,
-          x: lastItem.rect.x,
-          y: lastItem.rect.y - fontSize * 1.5 - 4,
-          width: 100,
-          height: fontSize,
-          newText: `PO# ${targetPo}`,
-          fontSize,
-          isErase: false,
-          align: "left",
-          weight: "normal",
-        });
       }
+    }
+
+    // Case C: No PO/WO placeholder found in any line
+    if (descLines.length > 0 && (!poHandled || !woHandled)) {
+      // Case C: No PO placeholder (and/or no WO placeholder) found.
+      // Append missing values to the SECOND line.
+      const lineToUse = descLines.length >= 2 ? descLines[1] : descLines[0];
+      const firstItem = lineToUse.items[0];
+      const fontSize = firstItem.rect.height || 8;
+
+      const minX = Math.min(...lineToUse.items.map((i) => i.rect.x));
+      const minY = Math.min(...lineToUse.items.map((i) => i.rect.y)) - 1;
+      const maxY =
+        Math.max(...lineToUse.items.map((i) => i.rect.y + i.rect.height)) + 1;
+
+      // 1. Erase the whole line (narrower width to avoid Amount column)
+      const eraseWidth = Math.min(460 - minX, 550 - minX);
+      ops.push({
+        pageIndex: firstItem.pageIndex,
+        x: minX - 1,
+        y: minY,
+        width: eraseWidth + 2,
+        height: maxY - minY - 1,
+        newText: "",
+        fontSize,
+        isErase: true,
+        align: "left",
+      });
+
+      // 2. Draw text with PO# and W.O.# if NOT already handled
+      let newLabel = lineToUse.text.trim();
+      if (!poHandled && targetPo) {
+        // Only append if it's not "Pending PO" (otherwise it's redundant to force an append)
+        if (!targetPo.toLowerCase().includes("pending")) {
+          newLabel += `  PO# ${targetPo}`;
+          poHandled = true;
+        }
+      }
+      if (!woHandled && targetWo) {
+        newLabel += `  W.O.# ${targetWo}`;
+        woHandled = true;
+      }
+
+      ops.push({
+        pageIndex: firstItem.pageIndex,
+        x: minX,
+        y: lineToUse.y - 2,
+        width: 0,
+        height: fontSize,
+        newText: newLabel,
+        fontSize,
+        isErase: false,
+        align: "left",
+        weight: "normal",
+      });
+    } else {
+      // Case D: Extreme fallback - no service lines found, append at absolute bottom of section
+      const lastItem = items.reduce((prev, curr) =>
+        curr.rect.y < prev.rect.y ? curr : prev,
+      );
+      const fontSize = Math.max(lastItem.rect.height * 0.9, 8);
+      let fallbackText = "";
+      if (!poHandled && targetPo) fallbackText += `PO# ${targetPo} `;
+      if (!woHandled && targetWo) fallbackText += `W.O.# ${targetWo}`;
+
+      ops.push({
+        pageIndex: lastItem.pageIndex,
+        x: lastItem.rect.x,
+        y: lastItem.rect.y - fontSize * 1.5 - 4,
+        width: 150,
+        height: fontSize,
+        newText: fallbackText.trim(),
+        fontSize,
+        isErase: false,
+        align: "left",
+        weight: "normal",
+      });
     }
   }
 
