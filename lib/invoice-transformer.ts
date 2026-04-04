@@ -88,10 +88,14 @@ export function applyMarkupToInvoice(
   let creditAmountRaw =
     invoice.creditAmount !== null ? invoice.creditAmount * factor : null;
 
+  // Fallback: derive credit from credit line items if header credit is missing
   if (creditAmountRaw === null) {
-    creditAmountRaw = markedLineItems
+    const creditFromItems = markedLineItems
       .filter((it) => it.type === "credit")
       .reduce((sum, it) => sum + Math.abs(it.amount ?? 0), 0);
+    if (creditFromItems > 0) {
+      creditAmountRaw = creditFromItems;
+    }
   }
 
   // ─── Step 5: Final Balanced Calculation ──────────────────────────
@@ -101,10 +105,27 @@ export function applyMarkupToInvoice(
   // ─── Step 6: Final Rounding (ONLY AT OUTPUT) ─────────────────────
   const subtotal = subtotalRaw !== null ? round2(subtotalRaw) : null;
   const taxAmount = taxAmountRaw !== null ? round2(taxAmountRaw) : null;
-  const totalAmount = totalAmountRaw !== null ? round2(totalAmountRaw) : null;
   const creditAmount =
-    creditAmountRaw !== null ? round2(creditAmountRaw) : null;
+    creditAmountRaw !== null && creditAmountRaw > 0
+      ? round2(creditAmountRaw)
+      : null;
   const balanceDue = balanceDueRaw !== null ? round2(balanceDueRaw) : null;
+
+  // Determine totalAmount: if the original invoice treats totalAmount and
+  // balanceDue as the same field (both equal), keep them in sync after markup.
+  // Otherwise, totalAmount = subtotal + tax (independent of credit).
+  const originalTotalEqualsBalance =
+    invoice.totalAmount !== null &&
+    invoice.balanceDue !== null &&
+    Math.abs(invoice.totalAmount - invoice.balanceDue) < 0.02;
+
+  let totalAmount: number | null;
+  if (originalTotalEqualsBalance && balanceDue !== null) {
+    // Same field on the PDF — keep them synchronized
+    totalAmount = balanceDue;
+  } else {
+    totalAmount = totalAmountRaw !== null ? round2(totalAmountRaw) : null;
+  }
 
   // Round line items for the final output as well
   const finalLineItems = markedLineItems.map((item) => ({

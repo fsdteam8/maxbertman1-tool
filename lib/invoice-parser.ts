@@ -368,14 +368,34 @@ function extractBlock(
  *  2. Stripped numeric match (ignoring $, commas, spaces)
  *  3. Proximity-based match: find adjacent items whose concatenation contains the value
  */
+export interface FindMetadataOptions {
+  yRange?: { min: number; max: number };
+  xRange?: { min: number; max: number };
+}
+
+/**
+ * Finds the coordinates for a field by searching for the value string in PDF items.
+ * Uses a multi-tier strategy with optional coordinate filtering to disambiguate
+ * identical values (e.g. Service Amount vs Balance Due).
+ */
 function findMetadata(
   value: string | null,
   items: PDFTextItem[],
+  options: FindMetadataOptions = {},
 ): PDFFieldMetadata | undefined {
   if (!value) return undefined;
 
+  const { yRange, xRange } = options;
+
+  // Filter items by coordinate ranges if provided
+  const candidateItems = items.filter((it) => {
+    if (yRange && (it.y < yRange.min || it.y > yRange.max)) return false;
+    if (xRange && (it.x < xRange.min || it.x > xRange.max)) return false;
+    return true;
+  });
+
   // Tier 1: Exact substring match
-  const exactItem = items.find((it) => it.str.includes(value));
+  const exactItem = candidateItems.find((it) => it.str.includes(value));
   if (exactItem) {
     return {
       rect: {
@@ -389,10 +409,10 @@ function findMetadata(
     };
   }
 
-  // Tier 2: Stripped numeric match — for values like "1,234.50" that may appear as "1234.50" or "1,234" in items
+  // Tier 2: Stripped numeric match
   const stripped = value.replace(/[$,\s]/g, "");
   if (stripped) {
-    const numItem = items.find((it) =>
+    const numItem = candidateItems.find((it) =>
       it.str.replace(/[$,\s]/g, "").includes(stripped),
     );
     if (numItem) {
@@ -409,20 +429,19 @@ function findMetadata(
     }
   }
 
-  // Tier 3: Proximity-based — group adjacent items on the same line and search the concatenation
-  const Y_TOLERANCE = 3; // items within 3 units vertically are on the same "line"
-  for (let i = 0; i < items.length; i++) {
-    const anchor = items[i];
+  // Tier 3: Proximity-based
+  const Y_TOLERANCE = 3;
+  for (let i = 0; i < candidateItems.length; i++) {
+    const anchor = candidateItems[i];
     let concat = anchor.str;
     let maxX = anchor.x + anchor.width;
     let maxH = anchor.height;
 
-    // Extend rightward through adjacent items on the same line
-    for (let j = i + 1; j < items.length; j++) {
-      const next = items[j];
+    for (let j = i + 1; j < candidateItems.length; j++) {
+      const next = candidateItems[j];
       if (next.pageIndex !== anchor.pageIndex) break;
       if (Math.abs(next.y - anchor.y) > Y_TOLERANCE) continue;
-      if (next.x < maxX - 5) continue; // skip items that are behind (not sequential)
+      if (next.x < maxX - 5) continue;
 
       concat += next.str;
       maxX = next.x + next.width;
@@ -592,11 +611,14 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   // Enhance line items with metadata for overlay
   lineItems.forEach((item) => {
     if (item.amount !== null) {
-      // Find coordinates for the amount string
       const amtStr = item.amount.toLocaleString("en-US", {
         minimumFractionDigits: 2,
       });
-      item.amountMetadata = findMetadata(amtStr, items);
+      // Restrict line item amounts to the "Service Activity" vertical area and the right-side AMOUNT column
+      item.amountMetadata = findMetadata(amtStr, items, {
+        yRange: { min: bottomY - 5, max: topY + 5 },
+        xRange: { min: 450, max: 600 },
+      });
     }
   });
 
@@ -636,30 +658,50 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
           ? balanceDue.toLocaleString("en-US", { minimumFractionDigits: 2 })
           : null,
         items,
+        {
+          yRange: { min: 50, max: bottomY + 50 },
+          xRange: { min: 450, max: 600 },
+        },
       ),
       subtotal: findMetadata(
         subtotal !== null
           ? subtotal.toLocaleString("en-US", { minimumFractionDigits: 2 })
           : null,
         items,
+        {
+          yRange: { min: bottomY - 20, max: topY },
+          xRange: { min: 450, max: 600 },
+        },
       ),
       taxAmount: findMetadata(
         taxAmount !== null
           ? taxAmount.toLocaleString("en-US", { minimumFractionDigits: 2 })
           : null,
         items,
+        {
+          yRange: { min: bottomY - 20, max: topY },
+          xRange: { min: 450, max: 600 },
+        },
       ),
       creditAmount: findMetadata(
         creditAmount !== null
           ? creditAmount.toLocaleString("en-US", { minimumFractionDigits: 2 })
           : null,
         items,
+        {
+          yRange: { min: bottomY - 20, max: topY },
+          xRange: { min: 450, max: 600 },
+        },
       ),
       totalAmount: findMetadata(
         totalAmount !== null
           ? totalAmount.toLocaleString("en-US", { minimumFractionDigits: 2 })
           : null,
         items,
+        {
+          yRange: { min: 50, max: bottomY + 50 },
+          xRange: { min: 450, max: 600 },
+        },
       ),
       poPlaceholder: findMetadata(poCheck.matchedText, items),
       poNumber: findMetadata(poNumber, items),
