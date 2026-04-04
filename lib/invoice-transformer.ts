@@ -17,6 +17,9 @@ import {
   detectPOPlaceholder,
   replacePOPlaceholder,
   replaceExistingPO,
+  detectWOPlaceholder,
+  replaceWOPlaceholder,
+  replaceExistingWO,
 } from "@/lib/text-replacement";
 
 /**
@@ -148,7 +151,6 @@ export function applyMarkupToInvoice(
 
 /**
  * Apply PO replacement to all description fields of an invoice.
- * Returns a new, immutable copy.
  */
 export function applyPOReplacement(
   invoice: ParsedInvoice,
@@ -185,6 +187,41 @@ export function applyPOReplacement(
 }
 
 /**
+ * Apply WO replacement to all description fields of an invoice.
+ */
+export function applyWOReplacement(
+  invoice: ParsedInvoice,
+  woNumber: string,
+): ParsedInvoice {
+  const updatedLineItems: ParsedLineItem[] = invoice.lineItems.map((item) => {
+    let desc = item.description;
+    let title = item.title;
+
+    // Case A: Placeholder
+    desc = replaceWOPlaceholder(desc, woNumber);
+    title = replaceWOPlaceholder(title, woNumber);
+
+    // Case B: Existing WO
+    if (invoice.woNumber) {
+      desc = replaceExistingWO(desc, invoice.woNumber, woNumber);
+      title = replaceExistingWO(title, invoice.woNumber, woNumber);
+    }
+
+    return {
+      ...item,
+      description: desc,
+      title: title,
+    };
+  });
+
+  return {
+    ...invoice,
+    lineItems: updatedLineItems,
+    woNumber: woNumber,
+  };
+}
+
+/**
  * Build the full ProcessedInvoice combining original and marked-up versions.
  * Automatically detects whether PO replacement was applied.
  */
@@ -198,14 +235,15 @@ export function buildProcessedInvoice(
 ): ProcessedInvoice {
   const warnings: string[] = [];
 
-  // Automatically use "Pending PO" if no real PO number is available per requirements
-  const finalPo = poNumber || "Pending PO";
+  // Apply PO replacement only if a PO number was explicitly provided from the frontend/tool.
+  // We no longer force a "Pending PO" default to avoid double-rendering issues.
+  const finalPo = poNumber;
 
   // Apply markup first
   let markedUp = applyMarkupToInvoice(original, markupPercent);
 
   // Transfer provided PO/WO parameters to markedUp directly for the GUI overlay engine
-  markedUp.poNumber = finalPo;
+  markedUp.poNumber = finalPo ?? null;
   if (woNumber) {
     markedUp.woNumber = woNumber;
   }
@@ -217,21 +255,36 @@ export function buildProcessedInvoice(
   }
 
   // Apply PO replacement if a PO number was provided
-  const hasPlaceholder =
+  const hasPoPlaceholder =
     original.poPlaceholderDetected ||
     original.lineItems.some(
       (item) => detectPOPlaceholder(item.description).detected,
     );
   const hasExistingPO = !!original.poNumber;
 
-  const poReplacementApplied = !!(
-    poNumber &&
-    (hasPlaceholder || hasExistingPO)
-  );
-
-  if (hasPlaceholder || hasExistingPO) {
+  if ((hasPoPlaceholder || hasExistingPO) && finalPo) {
     markedUp = applyPOReplacement(markedUp, finalPo);
   }
+
+  // Apply WO replacement if a WO number was provided
+  const hasWoPlaceholder = original.lineItems.some(
+    (item) => detectWOPlaceholder(item.description).detected,
+  );
+  const hasExistingWO = !!original.woNumber;
+
+  if ((hasWoPlaceholder || hasExistingWO) && woNumber) {
+    markedUp = applyWOReplacement(markedUp, woNumber);
+  }
+
+  const poReplacementApplied = !!(
+    finalPo &&
+    (hasPoPlaceholder || hasExistingPO)
+  );
+
+  const woReplacementApplied = !!(
+    woNumber &&
+    (hasWoPlaceholder || hasExistingWO)
+  );
 
   if (original.lowConfidence) {
     warnings.push(
@@ -250,9 +303,8 @@ export function buildProcessedInvoice(
     markedUp,
     markupPercent,
     poReplacementApplied,
-    replacementPoNumber: poReplacementApplied
-      ? (poNumber ?? null)
-      : (poNumber ?? null),
+    woReplacementApplied,
+    replacementPoNumber: finalPo ?? null,
     replacementWoNumber: woNumber ?? null,
     warnings,
   };

@@ -27,8 +27,20 @@ export const PO_PLACEHOLDER_PATTERNS: RegExp[] = [
   /\bPO#?\s*pending\b/gi,
 ];
 
+/** List of regex patterns that identify WO placeholders in invoice text */
+export const WO_PLACEHOLDER_PATTERNS: RegExp[] = [
+  /(W\.?O\.?#?\s*)(pending)/gi,
+  /pending\s+(?:WO|work\s+order)/gi,
+  /(W\.?O\.?#?\s*)(?:awaiting|TBA|to\s+be\s+assigned|TBD)/gi,
+  /\bW\.?O\.?#?\s*pending\b/gi,
+];
+
 /** Pattern to match an existing PO number after a prefix (labels like PO: PO# PO ) */
 export const EXISTING_PO_QUERY_PATTERN = /(PO[:#\s]*)\s*([A-Za-z0-9\-\/\.]+)/gi;
+
+/** Pattern to match an existing WO number after a prefix */
+export const EXISTING_WO_QUERY_PATTERN =
+  /(W\.?O\.?[:#\s]*)\s*([A-Za-z0-9\-\/\.]+)/gi;
 
 export interface PODetectionResult {
   detected: boolean;
@@ -55,6 +67,24 @@ export function detectPOPlaceholder(text: string): PODetectionResult {
 }
 
 /**
+ * Detect whether a text block contains a WO placeholder phrase.
+ */
+export function detectWOPlaceholder(text: string): PODetectionResult {
+  for (const pattern of WO_PLACEHOLDER_PATTERNS) {
+    pattern.lastIndex = 0;
+    const match = pattern.exec(text);
+    if (match) {
+      return {
+        detected: true,
+        matchedText: match[0],
+        pattern: pattern.toString(),
+      };
+    }
+  }
+  return { detected: false, matchedText: null, pattern: null };
+}
+
+/**
  * Replace a detected PO placeholder with a real PO number.
  * Replaces all occurrences across all known patterns.
  *
@@ -68,10 +98,47 @@ export function replacePOPlaceholder(text: string, poNumber: string): string {
 
   for (const pattern of PO_PLACEHOLDER_PATTERNS) {
     pattern.lastIndex = 0;
-    // If it's a pending placeholder, we use the exact text "Pending PO" per requirement
-    // otherwise we use "PO# [number]"
-    const replacement = isPending ? "Pending PO" : `PO# ${poNumber}`;
-    result = result.replace(pattern, replacement);
+    // Use a replacer function to avoid double-labeling if the pattern didn't include the prefix
+    result = result.replace(pattern, (match) => {
+      // If match already starts with PO# or similar, only replace the number/placeholder part
+      // and preserve the original label format.
+      const labelMatch = /^(PO#?\s*|Order#?\s*)/i.exec(match);
+      if (labelMatch) {
+        const label = labelMatch[1];
+        return isPending ? "Pending PO" : `${label}${poNumber}`;
+      }
+
+      // Bare replacement: if the match didn't have a label,
+      // but the poNumber itself doesn't have "PO#"...
+      if (isPending) return "Pending PO";
+
+      // If we are replacing a bare "pending" word, we should generally
+      // check if it's already preceded by a label in the full text.
+      // But for simplicity in this replacement loop, we'll prefix it if it's a number.
+      return `PO# ${poNumber}`;
+    });
+  }
+  return result;
+}
+
+/**
+ * Replace a detected WO placeholder with a real WO number.
+ */
+export function replaceWOPlaceholder(text: string, woNumber: string): string {
+  let result = text;
+  const isPending = woNumber.toLowerCase().includes("pending");
+
+  for (const pattern of WO_PLACEHOLDER_PATTERNS) {
+    pattern.lastIndex = 0;
+    result = result.replace(pattern, (match) => {
+      const labelMatch = /^(W\.?O\.?#?\s*)/i.exec(match);
+      if (labelMatch) {
+        const label = labelMatch[1];
+        return isPending ? "Pending WO" : `${label}${woNumber}`;
+      }
+      if (isPending) return "Pending WO";
+      return `W.O.# ${woNumber}`;
+    });
   }
   return result;
 }
@@ -101,6 +168,23 @@ export function replaceExistingPO(
     const labelMatch = /^(PO[:#]?\s*)/i.exec(match);
     const label = labelMatch ? labelMatch[1] : "PO# ";
     return `${label}${newPoNumber}`;
+  });
+}
+
+/**
+ * Replace an existing WO number with a new one.
+ */
+export function replaceExistingWO(
+  text: string,
+  oldWoNumber: string,
+  newWoNumber: string,
+): string {
+  const escaped = oldWoNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`W\\.?O\\.?[:#]?\\s*${escaped}(?![\\w-])`, "gi");
+  return text.replace(pattern, (match) => {
+    const labelMatch = /^(W\.?O\.?[:#]?\s*)/i.exec(match);
+    const label = labelMatch ? labelMatch[1] : "W.O.# ";
+    return `${label}${newWoNumber}`;
   });
 }
 

@@ -318,12 +318,13 @@ export function buildOverlayOps(
             const textBefore = fullText.slice(0, match.index);
             const remainderText = fullText.slice(match.index);
 
-            const substitutedRemainder = remainderText.replace(
-              /(W\.?O\.?\s*#?\s*)[a-zA-Z0-9\-]+/i,
-              `$1${targetWo}`,
-            );
+            const substitutedRemainder = remainderText
+              .replace(/pending/i, targetWo)
+              .replace(/awaiting/i, targetWo)
+              .replace(/(W\.?O\.?#?\s*)[a-zA-Z0-9\-]+/i, `$1${targetWo}`);
 
-            const fontSize = targetItem.rect.height || 9;
+            // Reduce font size slightly (90% of original height) to avoid overlap issues
+            const fontSize = (targetItem.rect.height || 8) * 0.9;
             const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
             const measuredFullWidth = font.widthOfTextAtSize(
               fullText,
@@ -344,7 +345,7 @@ export function buildOverlayOps(
             ops.push({
               pageIndex: targetItem.pageIndex,
               x: startX - 1,
-              y: minY,
+              y: minY - 2, // Aligning with the user's edit in the PO# section
               width: maxRightEdge - startX + 2,
               height: maxY - minY,
               newText: "", // erase exactly from match to right edge
@@ -403,13 +404,20 @@ export function buildOverlayOps(
             const textBefore = fullText.slice(0, match.index);
             const remainderText = fullText.slice(match.index);
 
-            let substitutedRemainder = remainderText
-              .replace(/pending/i, `${targetPo}`)
-              .replace(/awaiting/i, `${targetPo}`)
-              .replace(/(PO[:#\s]*)[a-zA-Z0-9\-]+/i, `$1${targetPo}`)
-              .replace(/(order\s*#?\s*)[a-zA-Z0-9\-]+/i, `$1${targetPo}`);
+            let substitutedRemainder = remainderText;
+            if (targetPo) {
+              // Be smart about replacement: if targetPo is already "Pending PO",
+              // and we matched "pending", just avoid double labeling if possible.
+              // However, the most robust way is to just replace the matched text.
+              substitutedRemainder = remainderText
+                .replace(/pending/i, targetPo)
+                .replace(/awaiting/i, targetPo)
+                .replace(/(PO[:#\s]*)[a-zA-Z0-9\-]+/i, `$1${targetPo}`)
+                .replace(/(order\s*#?\s*)[a-zA-Z0-9\-]+/i, `$1${targetPo}`);
+            }
 
-            const fontSize = targetItem.rect.height || 8;
+            // Reduce font size slightly (90% of original height) to avoid overlap issues
+            const fontSize = (targetItem.rect.height || 8) * 0.9;
             const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
             const measuredFullWidth = font.widthOfTextAtSize(
               fullText,
@@ -430,7 +438,7 @@ export function buildOverlayOps(
             ops.push({
               pageIndex: targetItem.pageIndex,
               x: startX - 2,
-              y: minY,
+              y: minY - 2,
               width: maxRightEdge - startX + 4,
               height: maxY - minY,
               newText: "",
@@ -440,6 +448,10 @@ export function buildOverlayOps(
             });
 
             let textToDraw = substitutedRemainder;
+            if (!woHandled && targetWo) {
+              textToDraw += `  W.O.# ${targetWo}`;
+              woHandled = true;
+            }
             for (let i = targetItemIndex + 1; i < poLine.items.length; i++) {
               textToDraw += " " + (poLine.items[i].fullText || "");
             }
@@ -487,8 +499,11 @@ export function buildOverlayOps(
         // 2. Draw text with PO# and W.O.# if NOT already handled
         let newLabel = lineToUse.text.trim();
         if (!poHandled && targetPo) {
-          newLabel += `  PO# ${targetPo}`;
-          poHandled = true;
+          // Only append if it's not "Pending PO" (otherwise it's redundant to force an append)
+          if (!targetPo.toLowerCase().includes("pending")) {
+            newLabel += `  PO# ${targetPo}`;
+            poHandled = true;
+          }
         }
         if (!woHandled && targetWo) {
           newLabel += `  W.O.# ${targetWo}`;

@@ -107,6 +107,7 @@ export interface ProcessedInvoice {
   markedUp: ParsedInvoice;
   markupPercent: number;
   poReplacementApplied: boolean;
+  woReplacementApplied: boolean;
   replacementPoNumber: string | null;
   replacementWoNumber: string | null;
   warnings: string[];
