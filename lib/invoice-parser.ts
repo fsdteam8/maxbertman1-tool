@@ -371,6 +371,7 @@ function extractBlock(
 export interface FindMetadataOptions {
   yRange?: { min: number; max: number };
   xRange?: { min: number; max: number };
+  targetY?: number;
 }
 
 /**
@@ -385,7 +386,7 @@ function findMetadata(
 ): PDFFieldMetadata | undefined {
   if (!value) return undefined;
 
-  const { yRange, xRange } = options;
+  const { yRange, xRange, targetY } = options;
 
   // Filter items by coordinate ranges if provided
   const candidateItems = items.filter((it) => {
@@ -394,42 +395,56 @@ function findMetadata(
     return true;
   });
 
-  // Tier 1: Exact substring match
-  const exactItem = candidateItems.find((it) => it.str.includes(value));
-  if (exactItem) {
+  const pickBest = (matches: any[]) => {
+    if (matches.length === 0) return undefined;
+    if (targetY !== undefined) {
+      matches.sort((a, b) => Math.abs(a.y - targetY) - Math.abs(b.y - targetY));
+    }
+    return matches[0];
+  };
+
+  // Tier 0: Exact complete literal match (helps avoid matching "$90.00" when looking for "90.00")
+  const exactFullMatches = candidateItems.filter(
+    (it) => it.str.trim() === value,
+  );
+  if (exactFullMatches.length > 0) {
+    const best = pickBest(exactFullMatches);
     return {
-      rect: {
-        x: exactItem.x,
-        y: exactItem.y,
-        width: exactItem.width,
-        height: exactItem.height,
-      },
-      pageIndex: exactItem.pageIndex,
-      fullText: exactItem.str,
+      rect: { x: best.x, y: best.y, width: best.width, height: best.height },
+      pageIndex: best.pageIndex,
+      fullText: best.str,
+    };
+  }
+
+  // Tier 1: Exact substring match
+  const exactMatches = candidateItems.filter((it) => it.str.includes(value));
+  if (exactMatches.length > 0) {
+    const best = pickBest(exactMatches);
+    return {
+      rect: { x: best.x, y: best.y, width: best.width, height: best.height },
+      pageIndex: best.pageIndex,
+      fullText: best.str,
     };
   }
 
   // Tier 2: Stripped numeric match
   const stripped = value.replace(/[$,\s]/g, "");
   if (stripped) {
-    const numItem = candidateItems.find((it) =>
+    const numMatches = candidateItems.filter((it) =>
       it.str.replace(/[$,\s]/g, "").includes(stripped),
     );
-    if (numItem) {
+    if (numMatches.length > 0) {
+      const best = pickBest(numMatches);
       return {
-        rect: {
-          x: numItem.x,
-          y: numItem.y,
-          width: numItem.width,
-          height: numItem.height,
-        },
-        pageIndex: numItem.pageIndex,
-        fullText: numItem.str,
+        rect: { x: best.x, y: best.y, width: best.width, height: best.height },
+        pageIndex: best.pageIndex,
+        fullText: best.str,
       };
     }
   }
 
   // Tier 3: Proximity-based
+  const proxMatches = [];
   const Y_TOLERANCE = 3;
   for (let i = 0; i < candidateItems.length; i++) {
     const anchor = candidateItems[i];
@@ -451,18 +466,26 @@ function findMetadata(
         concat.includes(value) ||
         concat.replace(/[$,\s]/g, "").includes(stripped)
       ) {
-        return {
-          rect: {
-            x: anchor.x,
-            y: anchor.y,
-            width: maxX - anchor.x,
-            height: maxH,
-          },
+        proxMatches.push({
+          x: anchor.x,
+          y: anchor.y,
+          width: maxX - anchor.x,
+          height: maxH,
           pageIndex: anchor.pageIndex,
           fullText: concat,
-        };
+        });
+        break; // Only keep the first valid proximity cluster for this anchor
       }
     }
+  }
+
+  if (proxMatches.length > 0) {
+    const best = pickBest(proxMatches);
+    return {
+      rect: { x: best.x, y: best.y, width: best.width, height: best.height },
+      pageIndex: best.pageIndex,
+      fullText: best.fullText,
+    };
   }
 
   return undefined;
@@ -583,7 +606,7 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   );
   const nextSectionItem = items.find(
     (it) =>
-      /(?:Sales\s*)?Tax|Total|Credit|Subtotal|PAGE/i.test(it.str) &&
+      /(?:Sales\s*)?Tax|Total|Credit|Subtotal|Balance|PAGE/i.test(it.str) &&
       it.y < (servicesHeaderItem?.y || 600),
   );
 
@@ -610,14 +633,26 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
 
   // Enhance line items with metadata for overlay
   lineItems.forEach((item) => {
+    // Try to find the title's coordinate so we can anchor the amount to the same row
+    let targetY: number | undefined;
+    if (item.title) {
+      // Find where the title is in the service block window
+      const titleMeta = findMetadata(item.title, items, {
+        yRange: { min: bottomY - 5, max: topY + 5 },
+      });
+      if (titleMeta) {
+        targetY = titleMeta.rect.y;
+      }
+    }
+
     if (item.amount !== null) {
       const amtStr = item.amount.toLocaleString("en-US", {
         minimumFractionDigits: 2,
       });
-      // Restrict line item amounts to the "Service Activity" vertical area and the right-side AMOUNT column
+      // Removing rigid xRange to allow the amount to float anywhere. Use targetY to align.
       item.amountMetadata = findMetadata(amtStr, items, {
         yRange: { min: bottomY - 5, max: topY + 5 },
-        xRange: { min: 450, max: 600 },
+        targetY: targetY,
       });
     }
   });
