@@ -306,16 +306,46 @@ export function buildOverlayOps(
       };
     });
 
-    // Identify lines that are Service Address blocks so we avoid placing W.O.# there
-    const serviceAddressLineIndices = new Set<number>();
-    descLines.forEach((line, idx) => {
-      if (/Service\s*Address/i.test(line.text))
-        serviceAddressLineIndices.add(idx);
-    });
+    // CRITICAL: Filter to ONLY lines that correspond to actual service items
+    // Exclude "Service Address", address patterns, and other non-service lines
+    // Build a set of Y coordinates that have service amounts (from lineItems metadata)
+    const serviceLineYCoordinates = new Set<number>();
+    for (const lineItem of original.lineItems) {
+      if (
+        lineItem.amountMetadata?.rect.y !== undefined &&
+        lineItem.amountMetadata.rect.y > bounds.bottomY &&
+        lineItem.amountMetadata.rect.y < bounds.topY
+      ) {
+        // Find the descLine that matches this Y coordinate (within tolerance)
+        const matchingDescLine = descLines.find(
+          (dl) => Math.abs(dl.y - lineItem.amountMetadata!.rect.y) <= Y_TOLERANCE,
+        );
+        if (matchingDescLine) {
+          serviceLineYCoordinates.add(matchingDescLine.y);
+        }
+      }
+    }
 
-    // Strategy 1: Replace PO placeholder (if found)
+    // Filter descLines to ONLY those that correspond to service items
+    // If no service items found by amount metadata, fall back to filtering out obvious non-service patterns
+    let serviceLines = descLines;
+    if (serviceLineYCoordinates.size > 0) {
+      serviceLines = descLines.filter((line) =>
+        serviceLineYCoordinates.has(line.y),
+      );
+    } else {
+      // Fallback: exclude lines that look like addresses or headers
+      serviceLines = descLines.filter(
+        (line) =>
+          !/Service\s+Address|^([A-Z][a-z]+,?\s+[A-Z]{2}\s+\d{5}|[A-Za-z\s-]+,\s+[A-Z]{2})/i.test(
+            line.text,
+          ),
+      );
+    }
+
+    // Strategy 1: Replace PO placeholder (if found) - Repaint entire line
     if (targetPo) {
-      const poLineIndex = descLines.findIndex(
+      const poLineIndex = serviceLines.findIndex(
         (line) =>
           // First look for explicit PO prefix with placeholder status (highest priority)
           /PO\s*#\s*(?:pending|awaiting|tbd|tba)/i.test(line.text) ||
@@ -327,212 +357,62 @@ export function buildOverlayOps(
       // CRITICAL: Verify the line is within Service Activity bounds before rendering
       const poLineValid =
         poLineIndex !== -1 &&
-        descLines[poLineIndex].y > bounds.bottomY &&
-        descLines[poLineIndex].y < bounds.topY;
+        serviceLines[poLineIndex].y > bounds.bottomY &&
+        serviceLines[poLineIndex].y < bounds.topY;
 
       if (poLineValid) {
-        const poLine = descLines[poLineIndex];
-        const targetItemIndex = poLine.items.findIndex((i) => {
-          const txt = i.fullText || "";
-          // Match items with PO prefix OR with pending/awaiting keywords
-          return /PO\s*#/.test(txt) || /pending|awaiting|tbd|tba/i.test(txt);
+        const poLine = serviceLines[poLineIndex];
+        const firstItem = poLine.items[0];
+        const lastItem = poLine.items[poLine.items.length - 1];
+        const fontSize = firstItem.rect.height || 8;
+
+        // Get bounding box for the entire line
+        const minX = Math.min(...poLine.items.map((i) => i.rect.x));
+        const maxX = Math.max(...poLine.items.map((i) => i.rect.x + i.rect.width));
+        const minY = Math.min(...poLine.items.map((i) => i.rect.y)) - 1;
+        const maxY = Math.max(...poLine.items.map((i) => i.rect.y + i.rect.height)) + 1;
+
+        // Replace placeholder/existing PO with new PO number
+        let newLineText = poLine.text;
+        newLineText = newLineText
+          .replace(/pending|awaiting|tbd|tba|to\s+be\s+assigned/i, targetPo)
+          .replace(/(PO\s*#\s*)[a-zA-Z0-9\-\/\.]+/i, `$1${targetPo}`)
+          .replace(/(order\s+#?\s*)[a-zA-Z0-9\-\/\.]+/i, `$1${targetPo}`);
+
+        // Erase the entire line
+        ops.push({
+          pageIndex: firstItem.pageIndex,
+          x: minX - 2,
+          y: minY - 2,
+          width: maxX - minX + 4,
+          height: maxY - minY + 2,
+          newText: "",
+          fontSize,
+          isErase: true,
+          align: "left",
         });
 
-        if (targetItemIndex !== -1) {
-          const targetItem = poLine.items[targetItemIndex];
-          const fullText = targetItem.fullText || "";
+        // Repaint the entire line with the new text
+        ops.push({
+          pageIndex: firstItem.pageIndex,
+          x: minX,
+          y: poLine.y - 1,
+          width: 0,
+          height: fontSize,
+          newText: newLineText,
+          fontSize,
+          isErase: false,
+          align: "left",
+          weight: "normal",
+        });
 
-          let match = /pending|awaiting|tbd|tba|to\s+be\s+assigned/i.exec(
-            fullText,
-          );
-          if (!match) match = /(PO\s*#\s*)[a-zA-Z0-9\-\/\.]+/i.exec(fullText);
-          if (!match)
-            match = /(order\s+#?\s*)[a-zA-Z0-9\-\/\.]+/i.exec(fullText);
-
-          if (match) {
-            const textBefore = fullText.slice(0, match.index);
-            const remainderText = fullText.slice(match.index);
-
-            let substitutedRemainder = remainderText;
-            if (targetPo) {
-              substitutedRemainder = remainderText
-                .replace(
-                  /pending|awaiting|tbd|tba|to\s+be\s+assigned/i,
-                  targetPo,
-                )
-                .replace(/(PO\s*#\s*)[a-zA-Z0-9\-\/\.]+/i, `$1${targetPo}`)
-                .replace(/(order\s+#?\s*)[a-zA-Z0-9\-\/\.]+/i, `$1${targetPo}`);
-            }
-
-            // Reduce font size slightly (90% of original height) to avoid overlap issues
-            const fontSize = (targetItem.rect.height || 8) * 0.9;
-            const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
-            const measuredFullWidth = font.widthOfTextAtSize(
-              fullText,
-              fontSize,
-            );
-            const scale = targetItem.rect.width / measuredFullWidth;
-            const startX = targetItem.rect.x + xOffset * scale;
-
-            const remainingItems = poLine.items.slice(targetItemIndex);
-            const maxRightEdge = Math.max(
-              ...remainingItems.map((i) => i.rect.x + i.rect.width),
-            );
-            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 1;
-            const maxY =
-              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
-              1;
-
-            ops.push({
-              pageIndex: targetItem.pageIndex,
-              x: startX - 2,
-              y: minY - 2,
-              width: maxRightEdge - startX + 4,
-              height: maxY - minY,
-              newText: "",
-              fontSize,
-              isErase: true,
-              align: "left",
-            });
-
-            let textToDraw = substitutedRemainder;
-            for (let i = targetItemIndex + 1; i < poLine.items.length; i++) {
-              textToDraw += " " + (poLine.items[i].fullText || "");
-            }
-
-            ops.push({
-              pageIndex: targetItem.pageIndex,
-              x: startX,
-              y: targetItem.rect.y - 2,
-              width: 0,
-              height: fontSize,
-              newText: textToDraw,
-              fontSize,
-              isErase: false,
-              align: "left",
-              weight: "normal",
-            });
-
-            poHandled = true;
-          }
-        }
+        poHandled = true;
       }
     }
 
-    // NEW STRATEGY: If user supplied PO or W.O., prefer repainting the whole "Services" line
-    // after the "Services" label and place PO/W.O. at the start of that line. This avoids
-    // piecemeal substring overlays that can mis-align on some PDFs.
-    if ((targetPo || targetWo) && !poHandled && !woHandled) {
-      const servicesHeaderLineIndex = descLines.findIndex((line) =>
-        /Service\s*-?\s*Activity|Services?/i.test(line.text),
-      );
-
-      if (servicesHeaderLineIndex !== -1) {
-        const headerLine = descLines[servicesHeaderLineIndex];
-
-        // Ensure header line within service activity bounds
-        if (headerLine.y > bounds.bottomY && headerLine.y < bounds.topY) {
-          // Find the item within the header line that contains the 'Services' word
-          const headerItemIndex = headerLine.items.findIndex((it) =>
-            /Service\s*-?\s*Activity|Services?/i.test(it.fullText || ""),
-          );
-
-          if (headerItemIndex !== -1) {
-            const headerItem = headerLine.items[headerItemIndex];
-            const fullText = headerItem.fullText || "";
-            const match = /Service\s*-?\s*Activity|Services?/i.exec(fullText);
-            // Compute X offset after the 'Services' text so we repaint only the trailing part
-            let startX = headerItem.rect.x;
-            const fontSize = (headerItem.rect.height || 8) * 0.9;
-            if (match) {
-              const textBefore = fullText.slice(
-                0,
-                match.index + match[0].length,
-              );
-              const measured = font.widthOfTextAtSize(textBefore, fontSize);
-              const measuredFull =
-                font.widthOfTextAtSize(fullText, fontSize) || 1;
-              const scale = headerItem.rect.width / measuredFull;
-              startX = headerItem.rect.x + measured * scale + 2; // small padding
-            }
-
-            // Determine line extents (avoid erasing amount columns on the right)
-            const remainingItems = headerLine.items.slice(headerItemIndex);
-            const maxRightEdge = Math.max(
-              ...remainingItems.map((i) => i.rect.x + i.rect.width),
-            );
-            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 2;
-            const maxY =
-              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
-              2;
-
-            // Erase the trailing portion of the header line (after 'Services')
-            ops.push({
-              pageIndex: headerItem.pageIndex,
-              x: startX - 2,
-              y: minY - 1,
-              width: maxRightEdge - startX + 4,
-              height: maxY - minY + 2,
-              newText: "",
-              fontSize,
-              isErase: true,
-              align: "left",
-            });
-
-            // Build new trailing text starting with PO/W.O. at the start of the line
-            let newTrailing = "";
-            if (
-              targetPo &&
-              !String(targetPo).toLowerCase().includes("pending")
-            ) {
-              newTrailing += `PO# ${targetPo}`;
-              poHandled = true;
-            }
-            if (targetWo) {
-              if (newTrailing) newTrailing += "  ";
-              newTrailing += `W.O.# ${targetWo}`;
-              woHandled = true;
-            }
-
-            // Append the original remainder of the header line (excluding the 'Services' token)
-            let remainder = "";
-            // Collect text from headerItem remainder plus following items
-            if (match) {
-              remainder = fullText.slice(match.index + match[0].length).trim();
-            }
-            for (
-              let i = headerItemIndex + 1;
-              i < headerLine.items.length;
-              i++
-            ) {
-              remainder +=
-                (remainder ? " " : "") + (headerLine.items[i].fullText || "");
-            }
-
-            const trailingText = (
-              newTrailing + (remainder ? `  ${remainder.trim()}` : "")
-            ).trim();
-
-            ops.push({
-              pageIndex: headerItem.pageIndex,
-              x: startX,
-              y: headerItem.rect.y - 2,
-              width: 0,
-              height: fontSize,
-              newText: trailingText,
-              fontSize,
-              isErase: false,
-              align: "left",
-              weight: "normal",
-            });
-          }
-        }
-      }
-    }
-
-    // Strategy 2: Replace W.O. placeholder (if found) - INDEPENDENTLY from PO
-    if (targetWo) {
-      const woLineIndex = descLines.findIndex(
+    // Strategy 2: Replace W.O. placeholder (if found) - Repaint entire line
+    if (targetWo && !poHandled) {
+      const woLineIndex = serviceLines.findIndex(
         (line) =>
           // Look for W.O. with placeholder status (highest priority)
           /W\.?O\.?\s*#\s*(?:pending|awaiting|tbd|tba)/i.test(line.text) ||
@@ -542,107 +422,64 @@ export function buildOverlayOps(
       // CRITICAL: Verify the line is within Service Activity bounds before rendering
       const woLineValid =
         woLineIndex !== -1 &&
-        descLines[woLineIndex].y > bounds.bottomY &&
-        descLines[woLineIndex].y < bounds.topY &&
-        // Avoid Service Address lines for default W.O. placement
-        !serviceAddressLineIndices.has(woLineIndex);
+        serviceLines[woLineIndex].y > bounds.bottomY &&
+        serviceLines[woLineIndex].y < bounds.topY;
 
       if (woLineValid) {
-        const woLine = descLines[woLineIndex];
-        const targetItemIndex = woLine.items.findIndex((i) => {
-          const txt = i.fullText || "";
-          // Match items with W.O. prefix OR with pending/awaiting keywords
-          return (
-            /W\.?O\.?\s*#/.test(txt) || /pending|awaiting|tbd|tba/i.test(txt)
-          );
+        const woLine = serviceLines[woLineIndex];
+        const firstItem = woLine.items[0];
+        const fontSize = firstItem.rect.height || 8;
+
+        // Get bounding box for the entire line
+        const minX = Math.min(...woLine.items.map((i) => i.rect.x));
+        const maxX = Math.max(...woLine.items.map((i) => i.rect.x + i.rect.width));
+        const minY = Math.min(...woLine.items.map((i) => i.rect.y)) - 2;
+        const maxY = Math.max(...woLine.items.map((i) => i.rect.y + i.rect.height)) + 2;
+
+        // Replace placeholder/existing W.O. with new W.O. number
+        let newLineText = woLine.text;
+        newLineText = newLineText
+          .replace(/pending|awaiting|tbd|tba|to\s+be\s+assigned/i, targetWo)
+          .replace(/(W\.?O\.?\s*#\s*)[a-zA-Z0-9\-\/\.]+/i, `$1${targetWo}`);
+
+        // Erase the entire line
+        ops.push({
+          pageIndex: firstItem.pageIndex,
+          x: minX - 2,
+          y: minY - 2,
+          width: maxX - minX + 4,
+          height: maxY - minY + 2,
+          newText: "",
+          fontSize,
+          isErase: true,
+          align: "left",
         });
 
-        if (targetItemIndex !== -1) {
-          const targetItem = woLine.items[targetItemIndex];
-          const fullText = targetItem.fullText || "";
+        // Repaint the entire line with the new text
+        ops.push({
+          pageIndex: firstItem.pageIndex,
+          x: minX,
+          y: woLine.y - 1,
+          width: 0,
+          height: fontSize,
+          newText: newLineText,
+          fontSize,
+          isErase: false,
+          align: "left",
+          weight: "normal",
+        });
 
-          // Try to find the placeholder or existing value to replace
-          let match = /pending|awaiting|tbd|tba|to\s+be\s+assigned/i.exec(
-            fullText,
-          );
-          if (!match)
-            match = /(W\.?O\.?\s*#\s*)[a-zA-Z0-9\-\/\.]+/i.exec(fullText);
-
-          if (match) {
-            const textBefore = fullText.slice(0, match.index);
-            const remainderText = fullText.slice(match.index);
-
-            const substitutedRemainder = remainderText
-              .replace(/pending|awaiting|tbd|tba|to\s+be\s+assigned/i, targetWo)
-              .replace(/(W\.?O\.?\s*#\s*)[a-zA-Z0-9\-\/\.]+/i, `$1${targetWo}`);
-
-            const fontSize = (targetItem.rect.height || 8) * 0.9;
-            const xOffset = font.widthOfTextAtSize(textBefore, fontSize);
-            const measuredFullWidth = font.widthOfTextAtSize(
-              fullText,
-              fontSize,
-            );
-            const scale = targetItem.rect.width / measuredFullWidth;
-            const startX = targetItem.rect.x + xOffset * scale;
-
-            const remainingItems = woLine.items.slice(targetItemIndex);
-            const maxRightEdge = Math.max(
-              ...remainingItems.map((i) => i.rect.x + i.rect.width),
-            );
-            const minY = Math.min(...remainingItems.map((i) => i.rect.y)) - 2;
-            const maxY =
-              Math.max(...remainingItems.map((i) => i.rect.y + i.rect.height)) +
-              2;
-
-            ops.push({
-              pageIndex: targetItem.pageIndex,
-              x: startX - 1,
-              y: minY - 2,
-              width: maxRightEdge - startX + 2,
-              height: maxY - minY,
-              newText: "",
-              fontSize,
-              isErase: true,
-              align: "left",
-            });
-
-            let textToDraw = substitutedRemainder;
-            for (let i = targetItemIndex + 1; i < woLine.items.length; i++) {
-              textToDraw += " " + (woLine.items[i].fullText || "");
-            }
-
-            ops.push({
-              pageIndex: targetItem.pageIndex,
-              x: startX,
-              y: targetItem.rect.y - 2,
-              width: 0,
-              height: fontSize,
-              newText: textToDraw.trim(),
-              fontSize,
-              isErase: false,
-              align: "left",
-              weight: "normal",
-            });
-
-            woHandled = true;
-          }
-        }
+        woHandled = true;
       }
     }
 
-    // Case C: Append unhandled PO/W.O. to the end of the line (if any remain)
-    // This handles cases where no placeholder was found for either PO or W.O.
-    // CRITICAL: Only render on lines that are WITHIN the Service Activity block
-    const validLines = descLines
-      .map((line, idx) => ({ line, idx }))
-      .filter(
-        ({ line, idx }) =>
-          line.y > bounds.bottomY &&
-          line.y < bounds.topY &&
-          // Exclude Service Address lines from default append targets
-          !serviceAddressLineIndices.has(idx),
-      )
-      .map(({ line }) => line);
+    // Case C: Append unhandled PO/W.O. to the end of a line (if any remain)
+    // CRITICAL: Only render PO/W.O. if they can fit WITHIN the Service Activity block.
+    // If no valid line is found within bounds, skip PO/W.O. rendering entirely to prevent
+    // rendering outside the Service Activity block and causing UI discrepancies.
+    const validLines = serviceLines.filter(
+      (line) => line.y > bounds.bottomY && line.y < bounds.topY,
+    );
 
     const hasUnhandledPo = !poHandled && targetPo;
     const hasUnhandledWo = !woHandled && targetWo;
@@ -650,14 +487,6 @@ export function buildOverlayOps(
     if ((hasUnhandledPo || hasUnhandledWo) && validLines.length > 0) {
       // Append to the LAST valid line within bounds
       const lineToUse = validLines[validLines.length - 1];
-
-      // CRITICAL SAFETY CHECK: Verify this line is actually within bounds before rendering
-      if (lineToUse.y <= bounds.bottomY || lineToUse.y >= bounds.topY) {
-        console.warn(
-          `[buildOverlayOps] Case C: Line at Y=${lineToUse.y} is out of bounds [${bounds.bottomY}, ${bounds.topY}], skipping to prevent corruption`,
-        );
-        return ops;
-      }
 
       const firstItem = lineToUse.items[0];
       const fontSize = firstItem.rect.height || 8;
@@ -667,7 +496,7 @@ export function buildOverlayOps(
       const maxY =
         Math.max(...lineToUse.items.map((i) => i.rect.y + i.rect.height)) + 1;
 
-      // 1. Erase the whole line (narrower width to avoid Amount column)
+      // 1. Erase the whole line to repaint cleanly (narrower width to avoid Amount column)
       const eraseWidth = Math.min(460 - minX, 550 - minX);
       ops.push({
         pageIndex: firstItem.pageIndex,
@@ -706,6 +535,12 @@ export function buildOverlayOps(
         align: "left",
         weight: "normal",
       });
+    } else if (hasUnhandledPo || hasUnhandledWo) {
+      // No valid lines found within Service Activity bounds or no service lines identified
+      // Skip PO/W.O. rendering entirely to prevent UI discrepancies
+      console.warn(
+        `[buildOverlayOps] Cannot fit PO/W.O. within Service lines (found ${validLines.length} service lines). Skipping to prevent rendering outside the Services section.`,
+      );
     }
   }
 

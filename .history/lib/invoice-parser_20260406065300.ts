@@ -624,10 +624,7 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
     const isLeftColumn = it.x < 300; // Left column is usually < 300
     // Skip common static headers and address-like content
     const isNotHeader = !/Invoice|Customer|Date|Activity/i.test(it.str);
-    const isNotAddress =
-      !/^([A-Z][a-z]+,?\s+[A-Z]{2}\s+\d{5}|[A-Za-z\s-]+,\s+[A-Z]{2})/.test(
-        it.str,
-      );
+    const isNotAddress = !/^([A-Z][a-z]+,?\s+[A-Z]{2}\s+\d{5}|[A-Za-z\s-]+,\s+[A-Z]{2})/.test(it.str);
     return (
       isBelowHeader &&
       isAboveFooter &&

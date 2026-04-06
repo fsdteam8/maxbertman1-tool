@@ -68,8 +68,7 @@ export function applyMarkupToInvoice(
   // If there's a large discrepancy, log a warning for debugging
   if (invoice.subtotal !== null && subtotalRaw > 0) {
     const expectedSubtotal = invoice.subtotal * factor;
-    const discrepancy =
-      Math.abs(subtotalRaw - expectedSubtotal) / expectedSubtotal;
+    const discrepancy = Math.abs(subtotalRaw - expectedSubtotal) / expectedSubtotal;
     if (discrepancy > 0.05) {
       console.warn(
         `[applyMarkupToInvoice] Subtotal discrepancy detected: recalculated=${subtotalRaw}, expected=${expectedSubtotal}, difference=${(discrepancy * 100).toFixed(2)}%`,
@@ -83,81 +82,65 @@ export function applyMarkupToInvoice(
   let totalAmountRaw: number | null = null;
   let taxAmountRaw: number | null = null;
 
-  if (subtotalRaw > 0) {
+  if (subtotalRaw !== null) {
     // 1. Calculate original tax rate (fallback to 6.35% only if tax existed but rate unknown)
     let taxMultiplier = 1.0;
     if (invoice.taxRate !== null) {
       taxMultiplier = 1 + invoice.taxRate / 100;
-    } else if (
-      invoice.taxAmount !== null &&
-      invoice.subtotal &&
-      invoice.subtotal > 0
-    ) {
+    } else if (invoice.taxAmount !== null && invoice.subtotal) {
       taxMultiplier = 1 + invoice.taxAmount / invoice.subtotal;
-    } else if (invoice.taxAmount !== null && invoice.taxAmount > 0) {
-      // CRITICAL FIX: If original subtotal is null but we recalculated it from line items,
-      // use the recalculated subtotalRaw to derive the tax multiplier.
-      // This prevents the catastrophic error of dividing by 1 when subtotal is null.
-      const effectiveSubtotal = invoice.subtotal || subtotalRaw;
-      taxMultiplier = 1 + invoice.taxAmount / effectiveSubtotal;
-    } else {
-      // No tax in original, don't add tax
-      totalAmountRaw = subtotalRaw;
+    } else if (invoice.taxAmount !== null) {
+      // Fallback if we have tax but no subtotal to derive rate
+      taxMultiplier = 1.0635;
     }
 
-    // 2. Apply multiplicative formula: total = subtotal * multiplier (only if tax exists)
-    if (totalAmountRaw === null) {
-      totalAmountRaw = subtotalRaw * taxMultiplier;
-      taxAmountRaw = totalAmountRaw - subtotalRaw;
-    }
+    // 2. Apply multiplicative formula: total = subtotal * multiplier
+    totalAmountRaw = subtotalRaw * taxMultiplier;
+    taxAmountRaw = totalAmountRaw - subtotalRaw;
   }
 
   // ─── Step 4: Handle Credit ───────────────────────────────────────
-  // Credits are marked up for consistency
-  const creditFromItems = markedLineItems
-    .filter((it) => it.type === "credit")
-    .reduce((sum, it) => sum + Math.abs(it.amount ?? 0), 0);
-
   let creditAmountRaw =
-    creditFromItems > 0
-      ? creditFromItems
-      : invoice.creditAmount !== null
-        ? invoice.creditAmount * factor
-        : null;
+    invoice.creditAmount !== null ? invoice.creditAmount * factor : null;
+
+  // Fallback: derive credit from credit line items if header credit is missing
+  if (creditAmountRaw === null) {
+    const creditFromItems = markedLineItems
+      .filter((it) => it.type === "credit")
+      .reduce((sum, it) => sum + Math.abs(it.amount ?? 0), 0);
+    if (creditFromItems > 0) {
+      creditAmountRaw = creditFromItems;
+    }
+  }
 
   // ─── Step 5: Final Balanced Calculation ──────────────────────────
-  // CRITICAL: Balance Due is ALWAYS recalculated, never uses PDF extraction
   const balanceDueRaw =
     totalAmountRaw !== null ? totalAmountRaw - (creditAmountRaw ?? 0) : null;
 
   // ─── Step 6: Final Rounding (ONLY AT OUTPUT) ─────────────────────
-  // CRITICAL: Round totalAmount FIRST to avoid rounding discrepancies
-  // This ensures: subtotal + tax = totalAmount (no rounding errors)
-  const totalAmount = totalAmountRaw !== null ? round2(totalAmountRaw) : null;
-
-  // Now derive subtotal and tax from the rounded totalAmount
-  const subtotal = subtotalRaw > 0 ? round2(subtotalRaw) : null;
-  const taxAmount =
-    totalAmount !== null && subtotal !== null
-      ? round2(totalAmount - subtotal)
-      : taxAmountRaw !== null && taxAmountRaw > 0
-        ? round2(taxAmountRaw)
-        : null;
-
+  const subtotal = subtotalRaw !== null ? round2(subtotalRaw) : null;
+  const taxAmount = taxAmountRaw !== null ? round2(taxAmountRaw) : null;
   const creditAmount =
     creditAmountRaw !== null && creditAmountRaw > 0
       ? round2(creditAmountRaw)
       : null;
+  const balanceDue = balanceDueRaw !== null ? round2(balanceDueRaw) : null;
 
-  // CRITICAL: Always recalculate balance due, ensuring it includes the 1% markup
-  // Balance Due must be: totalAmount - creditAmount (not subtotal + tax - credit)
-  // Using totalAmount ensures no rounding discrepancies between separate calculations
-  const recalculatedBalanceDue =
-    totalAmount !== null
-      ? round2(totalAmount - (creditAmount ?? 0))
-      : balanceDueRaw !== null
-        ? round2(balanceDueRaw)
-        : null;
+  // Determine totalAmount: if the original invoice treats totalAmount and
+  // balanceDue as the same field (both equal), keep them in sync after markup.
+  // Otherwise, totalAmount = subtotal + tax (independent of credit).
+  const originalTotalEqualsBalance =
+    invoice.totalAmount !== null &&
+    invoice.balanceDue !== null &&
+    Math.abs(invoice.totalAmount - invoice.balanceDue) < 0.02;
+
+  let totalAmount: number | null;
+  if (originalTotalEqualsBalance && balanceDue !== null) {
+    // Same field on the PDF — keep them synchronized
+    totalAmount = balanceDue;
+  } else {
+    totalAmount = totalAmountRaw !== null ? round2(totalAmountRaw) : null;
+  }
 
   // Round line items for the final output as well
   const finalLineItems = markedLineItems.map((item) => ({
@@ -173,8 +156,8 @@ export function applyMarkupToInvoice(
     taxAmount,
     creditAmount,
     totalAmount,
-    // CRITICAL: Use recalculated balance due, never extract from PDF
-    balanceDue: recalculatedBalanceDue ?? totalAmount ?? null,
+    balanceDue:
+      balanceDue !== null && balanceDue > 0 ? balanceDue : totalAmount,
   };
 }
 
@@ -268,9 +251,8 @@ export function buildProcessedInvoice(
   // We no longer force a "Pending PO" default to avoid double-rendering issues.
   const finalPo = poNumber;
 
-  // Enforce a fixed 1% markup regardless of caller-supplied value
-  const enforcedMarkup = 1;
-  let markedUp = applyMarkupToInvoice(original, enforcedMarkup);
+  // Apply markup first
+  let markedUp = applyMarkupToInvoice(original, markupPercent);
 
   // Transfer provided PO/WO parameters to markedUp directly for the GUI overlay engine
   markedUp.poNumber = finalPo ?? null;
@@ -331,7 +313,7 @@ export function buildProcessedInvoice(
   return {
     original,
     markedUp,
-    markupPercent: enforcedMarkup,
+    markupPercent,
     poReplacementApplied,
     woReplacementApplied,
     replacementPoNumber: finalPo ?? null,

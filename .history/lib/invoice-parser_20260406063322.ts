@@ -588,18 +588,15 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   const poCheck = detectPOPlaceholder(text);
 
   // Existing PO number extraction (Case B)
-  // CRITICAL: Require at least one digit or special char to avoid matching words like "from", "valid", etc.
-  // Valid PO formats: "123456", "PO-2024-001", "PO/2024/01", etc.
   const poNumber = extractField(text, [
-    /\bPO\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba|from|valid|and|order)\b)([A-Z0-9\-\/\.]+(?:[0-9\-\/\.]|$))/i,
-    /\bPurchase\s*Order\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba|from|valid|and)\b)([A-Z0-9\-\/\.]+(?:[0-9\-\/\.]|$))/i,
+    /\bPO\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba)\b)([A-Za-z0-9\-\/\.]+)/i,
+    /\bPurchase\s*Order\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba)\b)([A-Za-z0-9\-\/\.]+)/i,
   ]);
 
   // Existing W.O. number extraction
-  // CRITICAL: Require at least one digit to avoid matching words like "from", "valid", etc.
   const woNumber = extractField(text, [
-    /\bW\.?O\.?\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba|from|valid|and)\b)([A-Z0-9\-\/\.]+(?:[0-9\-\/\.]|$))/i,
-    /\bWork\s*Order\b\s*#?\s*:?\s*(?!(?:pending|awaiting|tbd|tba|from|valid|and)\b)([A-Z0-9\-\/\.]+(?:[0-9\-\/\.]|$))/i,
+    /\bW\.?O\.?\b\s*#?\s*:?\s*([A-Za-z0-9\-\/\.]+)/i,
+    /\bWork\s*Order\b\s*#?\s*:?\s*([A-Za-z0-9\-\/\.]+)/i,
   ]);
 
   // Identify Service Activity Items
@@ -614,27 +611,15 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   );
 
   const topY = servicesHeaderItem ? servicesHeaderItem.y - 5 : 550;
-  // CRITICAL FIX: Set bottomY to a position just ABOVE the tax/total line, not below it
-  // This prevents service address and other footer content from being included
-  const bottomY = nextSectionItem ? nextSectionItem.y - 10 : 100;
+  const bottomY = nextSectionItem ? nextSectionItem.y + 5 : 100;
 
   const serviceActivityItems = items.filter((it) => {
     const isBelowHeader = it.y < topY;
     const isAboveFooter = it.y > bottomY;
     const isLeftColumn = it.x < 300; // Left column is usually < 300
-    // Skip common static headers and address-like content
+    // Skip common static headers
     const isNotHeader = !/Invoice|Customer|Date|Activity/i.test(it.str);
-    const isNotAddress =
-      !/^([A-Z][a-z]+,?\s+[A-Z]{2}\s+\d{5}|[A-Za-z\s-]+,\s+[A-Z]{2})/.test(
-        it.str,
-      );
-    return (
-      isBelowHeader &&
-      isAboveFooter &&
-      isLeftColumn &&
-      isNotHeader &&
-      isNotAddress
-    );
+    return isBelowHeader && isAboveFooter && isLeftColumn && isNotHeader;
   });
 
   const serviceActivityMetadata = serviceActivityItems.map((it) => ({

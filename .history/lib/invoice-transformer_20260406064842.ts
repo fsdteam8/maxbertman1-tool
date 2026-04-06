@@ -133,7 +133,8 @@ export function applyMarkupToInvoice(
   // ─── Step 6: Final Rounding (ONLY AT OUTPUT) ─────────────────────
   // CRITICAL: Round totalAmount FIRST to avoid rounding discrepancies
   // This ensures: subtotal + tax = totalAmount (no rounding errors)
-  const totalAmount = totalAmountRaw !== null ? round2(totalAmountRaw) : null;
+  const totalAmount =
+    totalAmountRaw !== null ? round2(totalAmountRaw) : null;
 
   // Now derive subtotal and tax from the rounded totalAmount
   const subtotal = subtotalRaw > 0 ? round2(subtotalRaw) : null;
@@ -268,9 +269,8 @@ export function buildProcessedInvoice(
   // We no longer force a "Pending PO" default to avoid double-rendering issues.
   const finalPo = poNumber;
 
-  // Enforce a fixed 1% markup regardless of caller-supplied value
-  const enforcedMarkup = 1;
-  let markedUp = applyMarkupToInvoice(original, enforcedMarkup);
+  // Apply markup first
+  let markedUp = applyMarkupToInvoice(original, markupPercent);
 
   // Transfer provided PO/WO parameters to markedUp directly for the GUI overlay engine
   markedUp.poNumber = finalPo ?? null;
@@ -331,7 +331,7 @@ export function buildProcessedInvoice(
   return {
     original,
     markedUp,
-    markupPercent: enforcedMarkup,
+    markupPercent,
     poReplacementApplied,
     woReplacementApplied,
     replacementPoNumber: finalPo ?? null,

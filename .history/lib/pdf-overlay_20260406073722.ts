@@ -309,8 +309,7 @@ export function buildOverlayOps(
     // Identify lines that are Service Address blocks so we avoid placing W.O.# there
     const serviceAddressLineIndices = new Set<number>();
     descLines.forEach((line, idx) => {
-      if (/Service\s*Address/i.test(line.text))
-        serviceAddressLineIndices.add(idx);
+      if (/Service\s*Address/i.test(line.text)) serviceAddressLineIndices.add(idx);
     });
 
     // Strategy 1: Replace PO placeholder (if found)
@@ -635,12 +634,11 @@ export function buildOverlayOps(
     // CRITICAL: Only render on lines that are WITHIN the Service Activity block
     const validLines = descLines
       .map((line, idx) => ({ line, idx }))
-      .filter(
-        ({ line, idx }) =>
-          line.y > bounds.bottomY &&
-          line.y < bounds.topY &&
-          // Exclude Service Address lines from default append targets
-          !serviceAddressLineIndices.has(idx),
+      .filter(({ line, idx }) =>
+        line.y > bounds.bottomY &&
+        line.y < bounds.topY &&
+        // Exclude Service Address lines from default append targets
+        !serviceAddressLineIndices.has(idx),
       )
       .map(({ line }) => line);
 

@@ -614,27 +614,15 @@ export function parseInvoiceText(content: ExtractedPDFContent): ParsedInvoice {
   );
 
   const topY = servicesHeaderItem ? servicesHeaderItem.y - 5 : 550;
-  // CRITICAL FIX: Set bottomY to a position just ABOVE the tax/total line, not below it
-  // This prevents service address and other footer content from being included
-  const bottomY = nextSectionItem ? nextSectionItem.y - 10 : 100;
+  const bottomY = nextSectionItem ? nextSectionItem.y + 5 : 100;
 
   const serviceActivityItems = items.filter((it) => {
     const isBelowHeader = it.y < topY;
     const isAboveFooter = it.y > bottomY;
     const isLeftColumn = it.x < 300; // Left column is usually < 300
-    // Skip common static headers and address-like content
+    // Skip common static headers
     const isNotHeader = !/Invoice|Customer|Date|Activity/i.test(it.str);
-    const isNotAddress =
-      !/^([A-Z][a-z]+,?\s+[A-Z]{2}\s+\d{5}|[A-Za-z\s-]+,\s+[A-Z]{2})/.test(
-        it.str,
-      );
-    return (
-      isBelowHeader &&
-      isAboveFooter &&
-      isLeftColumn &&
-      isNotHeader &&
-      isNotAddress
-    );
+    return isBelowHeader && isAboveFooter && isLeftColumn && isNotHeader;
   });
 
   const serviceActivityMetadata = serviceActivityItems.map((it) => ({

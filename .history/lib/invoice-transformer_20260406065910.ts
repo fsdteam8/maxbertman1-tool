@@ -268,9 +268,8 @@ export function buildProcessedInvoice(
   // We no longer force a "Pending PO" default to avoid double-rendering issues.
   const finalPo = poNumber;
 
-  // Enforce a fixed 1% markup regardless of caller-supplied value
-  const enforcedMarkup = 1;
-  let markedUp = applyMarkupToInvoice(original, enforcedMarkup);
+  // Apply markup first
+  let markedUp = applyMarkupToInvoice(original, markupPercent);
 
   // Transfer provided PO/WO parameters to markedUp directly for the GUI overlay engine
   markedUp.poNumber = finalPo ?? null;
@@ -331,7 +330,7 @@ export function buildProcessedInvoice(
   return {
     original,
     markedUp,
-    markupPercent: enforcedMarkup,
+    markupPercent,
     poReplacementApplied,
     woReplacementApplied,
     replacementPoNumber: finalPo ?? null,

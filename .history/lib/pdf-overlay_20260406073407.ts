@@ -306,13 +306,6 @@ export function buildOverlayOps(
       };
     });
 
-    // Identify lines that are Service Address blocks so we avoid placing W.O.# there
-    const serviceAddressLineIndices = new Set<number>();
-    descLines.forEach((line, idx) => {
-      if (/Service\s*Address/i.test(line.text))
-        serviceAddressLineIndices.add(idx);
-    });
-
     // Strategy 1: Replace PO placeholder (if found)
     if (targetPo) {
       const poLineIndex = descLines.findIndex(
@@ -543,9 +536,7 @@ export function buildOverlayOps(
       const woLineValid =
         woLineIndex !== -1 &&
         descLines[woLineIndex].y > bounds.bottomY &&
-        descLines[woLineIndex].y < bounds.topY &&
-        // Avoid Service Address lines for default W.O. placement
-        !serviceAddressLineIndices.has(woLineIndex);
+        descLines[woLineIndex].y < bounds.topY;
 
       if (woLineValid) {
         const woLine = descLines[woLineIndex];
@@ -633,16 +624,9 @@ export function buildOverlayOps(
     // Case C: Append unhandled PO/W.O. to the end of the line (if any remain)
     // This handles cases where no placeholder was found for either PO or W.O.
     // CRITICAL: Only render on lines that are WITHIN the Service Activity block
-    const validLines = descLines
-      .map((line, idx) => ({ line, idx }))
-      .filter(
-        ({ line, idx }) =>
-          line.y > bounds.bottomY &&
-          line.y < bounds.topY &&
-          // Exclude Service Address lines from default append targets
-          !serviceAddressLineIndices.has(idx),
-      )
-      .map(({ line }) => line);
+    const validLines = descLines.filter(
+      (line) => line.y > bounds.bottomY && line.y < bounds.topY,
+    );
 
     const hasUnhandledPo = !poHandled && targetPo;
     const hasUnhandledWo = !woHandled && targetWo;

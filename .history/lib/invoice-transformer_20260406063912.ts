@@ -95,11 +95,9 @@ export function applyMarkupToInvoice(
     ) {
       taxMultiplier = 1 + invoice.taxAmount / invoice.subtotal;
     } else if (invoice.taxAmount !== null && invoice.taxAmount > 0) {
-      // CRITICAL FIX: If original subtotal is null but we recalculated it from line items,
-      // use the recalculated subtotalRaw to derive the tax multiplier.
-      // This prevents the catastrophic error of dividing by 1 when subtotal is null.
-      const effectiveSubtotal = invoice.subtotal || subtotalRaw;
-      taxMultiplier = 1 + invoice.taxAmount / effectiveSubtotal;
+      // If we have tax amount but no subtotal to derive rate, use ratio from marked-up values
+      // This ensures tax is preserved proportionally
+      taxMultiplier = 1 + invoice.taxAmount / (invoice.subtotal || 1);
     } else {
       // No tax in original, don't add tax
       totalAmountRaw = subtotalRaw;
@@ -133,7 +131,8 @@ export function applyMarkupToInvoice(
   // ─── Step 6: Final Rounding (ONLY AT OUTPUT) ─────────────────────
   // CRITICAL: Round totalAmount FIRST to avoid rounding discrepancies
   // This ensures: subtotal + tax = totalAmount (no rounding errors)
-  const totalAmount = totalAmountRaw !== null ? round2(totalAmountRaw) : null;
+  const totalAmount =
+    totalAmountRaw !== null ? round2(totalAmountRaw) : null;
 
   // Now derive subtotal and tax from the rounded totalAmount
   const subtotal = subtotalRaw > 0 ? round2(subtotalRaw) : null;
@@ -268,9 +267,8 @@ export function buildProcessedInvoice(
   // We no longer force a "Pending PO" default to avoid double-rendering issues.
   const finalPo = poNumber;
 
-  // Enforce a fixed 1% markup regardless of caller-supplied value
-  const enforcedMarkup = 1;
-  let markedUp = applyMarkupToInvoice(original, enforcedMarkup);
+  // Apply markup first
+  let markedUp = applyMarkupToInvoice(original, markupPercent);
 
   // Transfer provided PO/WO parameters to markedUp directly for the GUI overlay engine
   markedUp.poNumber = finalPo ?? null;
@@ -331,7 +329,7 @@ export function buildProcessedInvoice(
   return {
     original,
     markedUp,
-    markupPercent: enforcedMarkup,
+    markupPercent,
     poReplacementApplied,
     woReplacementApplied,
     replacementPoNumber: finalPo ?? null,
