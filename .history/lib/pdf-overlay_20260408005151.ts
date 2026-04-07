@@ -850,14 +850,14 @@ export async function applyOverlay(
       // Amount columns need more padding to avoid ghosting of old text
       const basePadding = op.noPadding ? 0 : 2;
       const padding = op.align === "right" ? basePadding + 1 : basePadding;
-      // REDUCED HEIGHT: Only add minimal padding on top and bottom to prevent overflow
-      const minimalVerticalPadding = 1;
+      // REDUCED TOP PADDING: Move erase area higher to reduce top spacing
+      const topPadding = padding * 0.5; // Half padding on top
 
       page.drawRectangle({
         x: op.x - padding,
-        y: op.y - minimalVerticalPadding,
+        y: op.y - topPadding,
         width: op.width + padding * 2,
-        height: op.height + minimalVerticalPadding * 2,
+        height: op.height + topPadding + padding,
         color: rgb(1, 1, 1),
       });
     }
@@ -886,13 +886,13 @@ export async function applyOverlay(
       textX = op.x + op.width - textWidth - rightMargin;
     }
 
-    // IMPROVED VERTICAL CENTERING: Center text vertically in the field
-    // Instead of 15% offset from top, calculate true vertical center
-    const verticalCenter = op.y + op.height / 2 - fontSize / 2;
+    // REDUCED TOP PADDING: Position text higher (30% instead of centered)
+    // This makes amounts sit closer to the top of the field naturally
+    const verticalPosition = op.y + op.height * 0.3;
 
     page.drawText(op.newText, {
       x: textX,
-      y: verticalCenter,
+      y: verticalPosition,
       size: fontSize,
       font: currentFont,
       color: rgb(0, 0, 0),

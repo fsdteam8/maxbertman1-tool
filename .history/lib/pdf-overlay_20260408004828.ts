@@ -850,14 +850,12 @@ export async function applyOverlay(
       // Amount columns need more padding to avoid ghosting of old text
       const basePadding = op.noPadding ? 0 : 2;
       const padding = op.align === "right" ? basePadding + 1 : basePadding;
-      // REDUCED HEIGHT: Only add minimal padding on top and bottom to prevent overflow
-      const minimalVerticalPadding = 1;
 
       page.drawRectangle({
         x: op.x - padding,
-        y: op.y - minimalVerticalPadding,
+        y: op.y - padding,
         width: op.width + padding * 2,
-        height: op.height + minimalVerticalPadding * 2,
+        height: op.height + padding * 2,
         color: rgb(1, 1, 1),
       });
     }

@@ -40,8 +40,7 @@ import {
  * KEY BUSINESS RULES:
  * - Mark up ALL service line items by the specified percentage (default 1%)
  * - Subtotal is ALWAYS recalculated from marked-up service line items (never from PDF extraction)
- * - If tax exists, mark it up independently (same 1% as services), NOT as a multiplier
- * - Total = Marked-Up Subtotal + Marked-Up Tax (never multiply, which would over-tax)
+ * - If tax exists, recalculate from markup AND preserve original tax rate
  * - If tax does not exist, do NOT inject tax
  * - Balance due is ALWAYS recalculated from marked-up subtotal, tax, and credits (never from PDF extraction)
  * - Preserve original invoice structure (tax presence/absence)

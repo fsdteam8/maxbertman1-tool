@@ -846,18 +846,12 @@ export async function applyOverlay(
     if (!page) continue;
 
     if (op.isErase) {
-      // IMPROVED ERASE AREA: Use adaptive padding based on field type
-      // Amount columns need more padding to avoid ghosting of old text
-      const basePadding = op.noPadding ? 0 : 2;
-      const padding = op.align === "right" ? basePadding + 1 : basePadding;
-      // REDUCED HEIGHT: Only add minimal padding on top and bottom to prevent overflow
-      const minimalVerticalPadding = 1;
-
+      const padding = op.noPadding ? 0 : 1;
       page.drawRectangle({
         x: op.x - padding,
-        y: op.y - minimalVerticalPadding,
+        y: op.y - padding,
         width: op.width + padding * 2,
-        height: op.height + minimalVerticalPadding * 2,
+        height: op.height + padding * 2,
         color: rgb(1, 1, 1),
       });
     }
@@ -867,11 +861,9 @@ export async function applyOverlay(
     // Auto-shrink font size if text is too wide for the target field
     let fontSize = op.fontSize;
     if (op.width > 0) {
-      const MIN_FONT_SIZE = 7;
-      // IMPROVED WIDTH CONSTRAINT: Use 90% available width for better spacing
-      const maxAllowedWidth = op.width * 0.9;
+      const MIN_FONT_SIZE = 6;
       let textWidth = currentFont.widthOfTextAtSize(op.newText, fontSize);
-      while (textWidth > maxAllowedWidth && fontSize > MIN_FONT_SIZE) {
+      while (textWidth > op.width + 2 && fontSize > MIN_FONT_SIZE) {
         fontSize -= 0.5;
         textWidth = currentFont.widthOfTextAtSize(op.newText, fontSize);
       }
@@ -881,18 +873,12 @@ export async function applyOverlay(
 
     let textX = op.x;
     if (op.align === "right") {
-      // IMPROVED RIGHT ALIGNMENT: Add 2px margin from right edge for financial data
-      const rightMargin = 2;
-      textX = op.x + op.width - textWidth - rightMargin;
+      textX = op.x + op.width - textWidth;
     }
-
-    // IMPROVED VERTICAL CENTERING: Center text vertically in the field
-    // Instead of 15% offset from top, calculate true vertical center
-    const verticalCenter = op.y + op.height / 2 - fontSize / 2;
 
     page.drawText(op.newText, {
       x: textX,
-      y: verticalCenter,
+      y: op.y + op.height * 0.15,
       size: fontSize,
       font: currentFont,
       color: rgb(0, 0, 0),
