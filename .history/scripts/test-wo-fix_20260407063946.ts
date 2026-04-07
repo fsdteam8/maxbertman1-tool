@@ -18,7 +18,6 @@ const MOCK_ORIGINAL: any = {
   totalAmount: 100,
   balanceDue: 100,
   poNumber: null,
-  woNumber: null,
   poPlaceholderDetected: true,
   sourceMetadata: {
     serviceActivityItems: [],
