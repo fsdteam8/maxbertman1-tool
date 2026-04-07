@@ -852,7 +852,7 @@ export async function applyOverlay(
       const padding = op.align === "right" ? basePadding + 1 : basePadding;
       // BALANCED VERTICAL PADDING: Cover old text completely but minimize overflow
       // Use 1.5px padding - enough to hide font rendering artifacts but not overflow far
-      const verticalPadding = 1.5;
+      const verticalPadding = 1.3;
 
       page.drawRectangle({
         x: op.x - padding,
